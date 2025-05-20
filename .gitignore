@@ -1,0 +1,36 @@
+# ========================
+# 💾 Python-related files
+# ========================
+__pycache__/
+*.py[cod]
+*$py.class
+
+# ========================
+# ⚙️ Virtual Environments & Dependencies
+# ========================
+.env
+venv/
+*.venv/
+
+# ========================
+# 📦 Build & Distribution
+# ========================
+build/
+dist/
+storage/
+*.egg-info/
+pypi.json
+publisher.py
+
+# ========================
+# 🛠 IDE & Editor Configs
+# ========================
+.vscode/
+.idea/
+*.iml
+
+# ========================
+# 📂 Miscellaneous
+# ========================
+.DS_Store
+Thumbs.db
