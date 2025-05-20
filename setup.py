@@ -25,7 +25,7 @@ setup(
     ],
     entry_points={
         "console_scripts": [
-            "orionis = orionis_cli.installer:main"
+            "orionis = orionis_cli.installer:setup"
         ]
     },
     test_suite="tests",
