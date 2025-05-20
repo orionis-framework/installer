@@ -16,7 +16,8 @@ setup(
     classifiers=metadata.getClassifiers(),
     keywords=metadata.getKeywords(),
     python_requires=metadata.getPythonVersion(),
-    packages=find_packages(),
+    packages=find_packages(include=["orionis_cli*"]),
+    package_dir={"": "."},
     include_package_data=True,
     install_requires=[
         "requests>=2.32.3",
