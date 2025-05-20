@@ -112,14 +112,6 @@ class OrionisInstaller:
         else:
             self.__console.print("[yellow]⚠[/] No .env.example found")
 
-    def __generateApiKey(self) -> None:
-        """Generate a secure API key."""
-        reactor = self.__getVenvPython()
-        self.__runCommand(
-            [reactor, "-B", "reactor", "key:generate"],
-            "Generating API key"
-        )
-
     def __cleanGitRepository(self) -> None:
         """Remove git origin and initialize fresh."""
         gitDir = self.__projectPath / ".git"
@@ -185,7 +177,6 @@ class OrionisInstaller:
             {"desc": "Setting up the Python virtual environment", "func": self.__createVirtualEnv},
             {"desc": "Installing required project dependencies", "func": self.__installDependencies},
             {"desc": "Configuring environment variables", "func": self.__setupEnvironment},
-            # {"desc": "Generating secure API key", "func": self.__generateApiKey},
             {"desc": "Finalizing project setup and cleaning repository", "func": self.__cleanGitRepository},
         ]
 
