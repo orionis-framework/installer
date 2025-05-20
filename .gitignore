@@ -8,7 +8,6 @@ __pycache__/
 # ========================
 # ⚙️ Virtual Environments & Dependencies
 # ========================
-.env
 venv/
 *.venv/
 
@@ -17,9 +16,7 @@ venv/
 # ========================
 build/
 dist/
-storage/
 *.egg-info/
-pypi.json
 publisher.py
 
 # ========================
