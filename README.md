@@ -1,14 +1,18 @@
 # Orionis Installer
 
-`orionis-installer` creates applications from the official Orionis skeleton on
-`master`, with Python **3.14.x**, a project-local `.venv` and `uv.lock`. Its Python
+`orionis-installer` creates applications from a selectable Orionis stack, with
+Python **3.14.x**, a project-local `.venv` and `uv.lock`. Its Python
 module is `orionis_installer` and its executable is **`orionis`**.
 
 The installer depends on CLI and configuration libraries. Orionis, database
 drivers, cloud SDKs and Faker belong to the generated application's environment.
-The English wizard supports arrow keys, Enter, visible defaults and immediate
-validation. Its ASCII banner adapts to narrow terminals; `NO_COLOR` and
-`--no-color` disable colors.
+The English wizard groups application metadata and services into clear stages,
+with descriptive stack choices, arrow-key navigation, visible defaults and immediate
+validation. A constellation identity, responsive plan cards, a live installation
+timeline and a status-aware completion panel guide the whole experience. Narrow
+terminals and plain logs are supported; `NO_COLOR` and `--no-color` disable colors.
+
+![Orionis installer interface with illustrative application data](docs/installer-preview.svg)
 
 ## Installation
 
@@ -39,23 +43,24 @@ For a local build:
 
 ```bash
 uv build
-uvx --python 3.14 --from ./dist/orionis_installer-0.1.0-py3-none-any.whl orionis --version
-uvx --python 3.14 --from ./dist/orionis_installer-0.1.0-py3-none-any.whl orionis new blog
+uvx --python 3.14 --from ./dist/orionis_installer-0.2.0-py3-none-any.whl orionis --version
+uvx --python 3.14 --from ./dist/orionis_installer-0.2.0-py3-none-any.whl orionis new blog
 ```
 
 ## Interactive wizard
 
 After checking prerequisites, the wizard requests:
 
-1. Application name, defaulting to `orionis-app`; `new blog` supplies it directly.
-2. Description, defaulting to `A modern application built with Orionis Framework.`
-3. Optional author name and email.
-4. File storage drivers and, for `all`, the default disk.
-5. Database drivers and, for `all`, the default connection.
-6. Confirmation of the absolute destination, Python target, extras and source.
+1. Application stack: **Blank** (`blank_1.x`, the default) or **SSR** (`ssr_1.x`).
+2. Application name, defaulting to `orionis-app`; `new blog` supplies it directly.
+3. Description, defaulting to `A modern application built with Orionis Framework.`
+4. Optional author name and email.
+5. File storage drivers and, for `all`, the default disk.
+6. Database drivers and, for `all`, the default connection.
+7. Confirmation of the absolute destination, Python target, extras, stack and source branch.
 
 Explicit options skip their corresponding questions. After installation, the
-wizard asks about Git initialization (Yes), migrations and initial seeders (No),
+wizard asks about Git initialization (Yes), database migrations (No),
 and Visual Studio Code (Yes), in that order. Ctrl+C cancels with exit code 130.
 Without a TTY, use `--no-interaction`; help and version remain available.
 
@@ -69,13 +74,15 @@ normalization. An existing destination is always rejected, even when empty.
 
 ```bash
 orionis new blog --no-interaction
+orionis new blog --stack Blank --no-interaction --migrate
+orionis new portal --stack SSR --no-interaction --migrate
 orionis new blog --no-interaction --git --no-migrate --no-open
 orionis new analytics --no-interaction --storage s3 --database redshift
 orionis new team --no-interaction --storage all --database all
 orionis new blog --no-interaction --path "./Project with spaces" --author-name "Jane Doe" --author-email jane@example.com
 ```
 
-Defaults are `orionis-app`, the description above, no author, local storage and
+Defaults are the Blank stack, `orionis-app`, the description above, no author, local storage and
 SQLite. Aggregate driver selections default to local storage and SQLite unless
 specified otherwise. Git, migrations and the editor are skipped unless their
 positive flags are provided. This mode never requests credentials.
@@ -88,6 +95,7 @@ positive flags are provided. This mode never requests credentials.
 | Option | Behavior |
 | --- | --- |
 | `new [NAME]` | Application name and default folder name. |
+| `--stack blank\|ssr` | Select the catalog repository and branch; names are case-insensitive. Defaults to Blank. |
 | `--path PATH` | Final project location; its parent must exist. |
 | `--description TEXT` | Application description. |
 | `--author-name TEXT`, `--author-email TEXT` | Optional author metadata; empty values omit a field. |
@@ -96,7 +104,7 @@ positive flags are provided. This mode never requests credentials.
 | `--database sqlite\|mysql\|pgsql\|oracle\|sqlserver\|redshift\|all` | Database drivers to install. |
 | `--default-database sqlite\|mysql\|pgsql\|oracle\|sqlserver\|redshift` | Active connection with `all`; defaults to SQLite. |
 | `--git / --no-git` | Initialize Git or skip it. |
-| `--migrate / --no-migrate` | Request migrations and initial seeders or skip them. |
+| `--migrate / --no-migrate` | Run pending schema migrations or skip them. |
 | `--open / --no-open` | Open Visual Studio Code or skip it. |
 | `--no-interaction` | Apply safe defaults without reading input. |
 | `--no-color` | Disable colors; also respects `NO_COLOR`, including an empty value. |
@@ -104,6 +112,36 @@ positive flags are provided. This mode never requests credentials.
 
 A default driver must be concrete. Without `all`, it can only repeat the selected
 driver. There is no destructive `--force` option.
+
+## Stack catalog
+
+Edit the centralized `STACKS` dictionary in `src/orionis_installer/models.py` to
+set the project and branch for each stack. The wizard derives its choices and
+descriptions from this catalog; CLI selection, download, review and provenance
+all resolve the same entry.
+
+```python
+STACKS = {
+    Stack.BLANK: SkeletonSource(
+        repository="https://github.com/orionis-framework/skeleton",
+        branch="blank_1.x",
+        label="Blank",
+        description="A minimal foundation for building your application from scratch.",
+    ),
+    Stack.SSR: SkeletonSource(
+        repository="https://github.com/orionis-framework/skeleton",
+        branch="ssr_1.x",
+        label="SSR",
+        description="A starting point for applications with server-side rendering.",
+    ),
+}
+```
+
+To add a stack, add its machine value to `Stack` and its source to `STACKS`.
+Sources use credential-free HTTPS repository URLs and explicit branch names.
+Only the selected branch is cloned; a missing branch fails without falling back.
+The generated `.orionis-install.json` records stack, repository, branch and commit
+SHA. Stack selection chooses a source: application features come from that branch.
 
 ## Drivers and configuration
 
@@ -136,18 +174,19 @@ version and the skeleton's Orionis requirement. The application remains
 unpackaged through `tool.uv.package = false`. `.env.example` is preferred;
 `env.example` is supported. Only verified configuration keys are changed, and the
 example remains intact. External connections and cloud storage require subsequent
-credential configuration. See the [inspected contract](docs/sources.md).
+credential configuration.
 
 APP_KEY is generated by the framework using the project interpreter, without
-`--force`; existing keys are preserved. The official skeleton's administrative
-seeder uses static example credentials, so automatic `--migrate` is blocked
-before data changes. Review the [separate hardening patch](docs/seeder-hardening.patch)
-and configure independent administrator credentials before manually running
-Reactor. The installer does not automatically certify modified seeder code.
+`--force`; existing keys are preserved. `--migrate` executes `reactor migrate`
+through that same interpreter after verifying the selected connection. SQLite
+works immediately; external databases require complete connection settings.
+Schema migrations run independently of seeders. To populate initial data, review
+the application's seeders and credentials, then invoke `reactor migrate --seed`
+manually from the generated project.
 
 ## Installation and recovery
 
-The installer clones only the official `master` branch into a sibling staging
+The installer clones the catalog's selected repository and branch into a sibling staging
 area, validates it, records its SHA and removes only that clone's `.git`. It
 configures files before publication and then runs one main
 `uv sync --python 3.14` at the final location. `.venv` is never moved from staging.
@@ -159,7 +198,7 @@ publication preserve the project and report recovery steps. The operation is not
 fully atomic across files, dependencies and database changes. An inherited uv
 workspace or custom `UV_CONFIG_FILE` is rejected to protect isolation; use uv's
 conventional configuration or documented environment variables for network,
-index and download policies. See [security and isolation](docs/security.md).
+index and download policies.
 
 | Exit code | Meaning |
 | --- | --- |
@@ -189,7 +228,13 @@ cd blog
 uv run python -B reactor serve
 ```
 
-After reviewing the connection and securing the seeders:
+Apply pending schema migrations:
+
+```bash
+uv run python -B reactor migrate
+```
+
+After reviewing the connection and securing the seeders, populate initial data:
 
 ```bash
 uv run python -B reactor migrate --seed
@@ -205,6 +250,7 @@ uv run --no-sync mypy
 uv run --no-sync pytest --cov=orionis_installer --cov-report=term-missing
 uv build
 uv run --no-sync python scripts/verify_distribution.py
+uv run --no-sync python scripts/preview_ui.py
 ```
 
 Normal tests use controlled terminal input, disposable processes and explicit
@@ -214,7 +260,8 @@ distribution verification script installs the wheel into a clean temporary
 environment and creates a disposable application through real uvx.
 
 Enable the real smoke test explicitly. It uses the official skeleton, uv and a
-disposable SQLite database, without running the example administrator seeder:
+disposable SQLite databases for both stacks, through the installer's migration
+path, without executing seeders:
 
 ```bash
 ORIONIS_REAL_SMOKE=1 uv run --no-sync pytest -m smoke -v
@@ -231,6 +278,9 @@ including lint, formatting, types, tests, build and the clean-wheel entry point.
 Runtime checks on an individual machine do not verify the other platforms or
 external cloud/database services. CI does not publish the package.
 
+`scripts/preview_ui.py` exports the actual renderer to `docs/installer-preview.svg`
+with illustrative application data, without downloading or creating an application.
+
 Follow the English, typed documentation style of
 [Orionis commands](https://github.com/orionis-framework/framework/blob/1.x/orionis/console/commands/support/key_generate.py)
 and [configuration entities](https://github.com/orionis-framework/framework/blob/1.x/orionis/foundation/config/database/entities/connections.py).
@@ -241,8 +291,7 @@ Examples section. Ruff enforces the NumPy convention and D401; an AST-based test
 checks documentation coverage for nested and private functions as well.
 
 Source lives in `src/orionis_installer`; unit and integration tests live in
-`tests`; technical contracts and policies live in `docs`; distribution verification
-lives in `scripts`. Message catalogs remain centralized in `messages.py` and
+`tests`; distribution verification lives in `scripts`. Message catalogs remain centralized in `messages.py` and
 `ui/messages.py`. Dependency constraints are declared in [pyproject.toml](pyproject.toml)
 and development resolutions in [uv.lock](uv.lock). License: [MIT](LICENCE).
 

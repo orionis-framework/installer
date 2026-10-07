@@ -311,8 +311,16 @@ class Installer:
         result = InstallationResult(self.plan, creation=State.RUNNING)
         try:
             with staging_destination(self.plan.path) as staging:
-                self._step(MESSAGES["phase_clone"])
-                revision = clone_skeleton(staging, self.prerequisites.git, self.runner)
+                self._step(
+                    MESSAGES["phase_clone"].format(
+                        stack=self.plan.source.label,
+                        repository=self.plan.source.repository,
+                        branch=self.plan.source.branch,
+                    )
+                )
+                revision = clone_skeleton(
+                    staging, self.prerequisites.git, self.runner, source=self.plan.source
+                )
                 self._step(MESSAGES["phase_configuration"])
                 requirement = configure_pyproject(
                     staging, self.plan, python_version=self.prerequisites.python_version
@@ -360,10 +368,19 @@ class Installer:
             raise Cancelled(self._recovery(result, MESSAGES["installation_cancelled"])) from None
         except InstallerError as exc:
             result.creation = State.FAILED
+            diagnostic = str(exc)
+            if isinstance(exc, CompatibilityError):
+                diagnostic = MESSAGES["skeleton_source_context"].format(
+                    diagnostic=diagnostic,
+                    repository=self.plan.source.repository,
+                    branch=self.plan.source.branch,
+                )
             if result.published:
                 if isinstance(exc, CompatibilityError):
-                    raise CompatibilityError(self._recovery(result, str(exc))) from exc
-                raise InstallerError(self._recovery(result, str(exc))) from exc
+                    raise CompatibilityError(self._recovery(result, diagnostic)) from exc
+                raise InstallerError(self._recovery(result, diagnostic)) from exc
+            if isinstance(exc, CompatibilityError):
+                raise CompatibilityError(diagnostic) from exc
             raise
         except OSError as exc:
             result.creation = State.FAILED

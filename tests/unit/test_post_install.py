@@ -1,9 +1,12 @@
-"""Post operations are simulated; these tests never touch real databases/editors."""
+"""Verify post operations with doubles and a disposable SQLite subprocess regression."""
 
 from __future__ import annotations
 
 import os
+import sqlite3
 import sys
+import venv
+from contextlib import closing
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -22,6 +25,7 @@ from orionis_installer.models import (
 )
 from orionis_installer.post_install import connection_ready, run_post_install, seeder_safety
 from orionis_installer.prerequisites import Prerequisites
+from orionis_installer.processes import Runner
 
 
 class FakeUI:
@@ -419,17 +423,17 @@ def test_cancelled_prompt_is_not_a_negative_answer(ready_project):
 @pytest.mark.parametrize(
     "expression", ["'password123'", "Hash.make('secret')", "Env.get('ADMIN_PASSWORD')"]
 )
-def test_unsafe_admin_seeder_refused_before_any_migration_or_credential_mutation(
+def test_admin_seeder_does_not_block_schema_migrations_or_modify_credentials(
     ready_project, expression
 ):
-    """Verify that unsafe administrative seeders fail before migrations or credential edits.
+    """Verify schema migrations remain independent of administrative seeder contents.
 
     Parameters
     ----------
     ready_project : tuple[InstallationResult, Prerequisites]
         Verified synthetic application result and executable prerequisites.
     expression : str
-        Administrative password expression that must trigger the seeder guard.
+        Administrative password expression that must remain unexecuted.
     """
     result, tools = ready_project
     seeder = result.plan.path / "database" / "seeders" / "admin.py"
@@ -438,10 +442,11 @@ def test_unsafe_admin_seeder_refused_before_any_migration_or_credential_mutation
     runner = FakePostRunner()
     ui = FakeUI(disallow_input=True)
     execute(result, tools, runner, ui, PostInstallOptions(False, True, True))
-    assert result.migrations == State.FAILED and result.editor == State.COMPLETED
-    assert [phase for phase, _, _ in runner.calls] == ["editor"]
+    assert result.migrations == State.COMPLETED and result.editor == State.COMPLETED
+    assert [phase for phase, _, _ in runner.calls] == ["migrations", "editor"]
+    assert "--seed" not in runner.calls[0][1]
     assert (result.plan.path / ".env").read_bytes() == environment_before
-    assert result.warnings[0] == MESSAGES["seeders_unsafe"]
+    assert not result.warnings
     assert "password123" not in str(ui.warnings) and "secret" not in str(ui.warnings)
 
 
@@ -490,9 +495,97 @@ def test_migration_uses_only_final_project_python_and_exact_command(ready_projec
     phase, argv, cwd = runner.calls[0]
     assert phase == "migrations" and cwd == result.plan.path
     assert Path(argv[0]).is_relative_to(result.plan.path / ".venv")
-    assert argv[1:] == ["-B", "reactor", "migrate", "--seed"]
+    assert argv[1:] == ["-B", "reactor", "migrate"]
     assert result.migrations == State.COMPLETED
     assert "sqlite" in ui.messages[0] and MESSAGES["migration_data_warning"] in ui.messages[0]
+
+
+def test_schema_migrations_ignore_invalid_seeder_syntax(ready_project):
+    """Verify migration execution does not inspect unrelated seeder syntax.
+
+    Parameters
+    ----------
+    ready_project : tuple[InstallationResult, Prerequisites]
+        Verified synthetic application result and executable prerequisites.
+    """
+    result, tools = ready_project
+    (result.plan.path / "database" / "seeders" / "broken.py").write_text("def broken(\n")
+    runner = FakePostRunner()
+    execute(
+        result, tools, runner, FakeUI(disallow_input=True), PostInstallOptions(False, True, False)
+    )
+    assert result.migrations == State.COMPLETED
+    assert len(runner.calls) == 1 and "--seed" not in runner.calls[0][1]
+
+
+def test_real_sqlite_migration_preserves_existing_data_and_never_seeds(ready_project):
+    """Run migration-only twice in a local environment and preserve pre-existing data.
+
+    Parameters
+    ----------
+    ready_project : tuple[InstallationResult, Prerequisites]
+        Disposable application result and executable prerequisites.
+    """
+    result, tools = ready_project
+    root = result.plan.path
+    venv.EnvBuilder(with_pip=False).create(root / ".venv")
+    database = root / "database" / "database.sqlite"
+    with closing(sqlite3.connect(database)) as connection, connection:
+        connection.execute("CREATE TABLE application_data (value TEXT)")
+        connection.execute("INSERT INTO application_data VALUES ('preserved')")
+    (root / "database" / "seeders" / "admin.py").write_text(
+        "from pathlib import Path\nPath('SEEDER_EXECUTED').write_text('unexpected')\n"
+    )
+    (root / "reactor").write_text(
+        "import runpy, sqlite3, sys\nfrom contextlib import closing\n"
+        "if '--seed' in sys.argv:\n"
+        "    runpy.run_path('database/seeders/admin.py')\n"
+        "assert sys.argv[1:] == ['migrate'], sys.argv\n"
+        "with closing(sqlite3.connect('database/database.sqlite')) as connection, connection:\n"
+        "    connection.execute('CREATE TABLE IF NOT EXISTS migrations (name TEXT UNIQUE)')\n"
+        "    connection.execute('CREATE TABLE IF NOT EXISTS users (email TEXT)')\n"
+        "    connection.execute(\"INSERT OR IGNORE INTO migrations VALUES ('create_users')\")\n"
+    )
+    environment_before = (root / ".env").read_bytes()
+    runner = Runner()
+    ui = FakeUI(disallow_input=True)
+    for _ in range(2):
+        run_post_install(
+            result,
+            PostInstallOptions(False, True, False),
+            tools,
+            runner,
+            ui,
+            no_interaction=True,
+        )
+        assert result.migrations == State.COMPLETED and not result.warnings
+    with closing(sqlite3.connect(database)) as connection:
+        assert connection.execute("SELECT value FROM application_data").fetchall() == [
+            ("preserved",)
+        ]
+        assert connection.execute("SELECT COUNT(*) FROM migrations").fetchone()[0] == 1
+        assert connection.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0
+    assert not (root / "SEEDER_EXECUTED").exists()
+    assert (root / ".env").read_bytes() == environment_before
+
+
+def test_missing_project_interpreter_fails_without_running_migrations(ready_project):
+    """Verify migration failure preserves the application when its interpreter is absent.
+
+    Parameters
+    ----------
+    ready_project : tuple[InstallationResult, Prerequisites]
+        Verified synthetic application result and executable prerequisites.
+    """
+    result, tools = ready_project
+    post_install.project_python(result.plan.path).unlink()
+    runner = FakePostRunner()
+    execute(
+        result, tools, runner, FakeUI(disallow_input=True), PostInstallOptions(False, True, False)
+    )
+    assert result.migrations == State.FAILED and not runner.calls
+    assert result.creation == State.COMPLETED and result.plan.path.is_dir()
+    assert result.warnings == [MESSAGES["project_interpreter_missing"]]
 
 
 def test_missing_editor_is_warning_and_application_is_preserved(ready_project, monkeypatch):
@@ -558,6 +651,26 @@ def test_noninteractive_migration_requires_complete_external_connection_without_
     )
     assert result.migrations == State.FAILED and result.exit_code == 3
     assert not runner.calls
+
+
+def test_changed_connection_fails_before_schema_migrations(ready_project):
+    """Verify a changed database driver fails before migration execution.
+
+    Parameters
+    ----------
+    ready_project : tuple[InstallationResult, Prerequisites]
+        Verified synthetic application result and executable prerequisites.
+    """
+    result, tools = ready_project
+    set_literal_env(result.plan.path / ".env", "DB_CONNECTION", "mysql")
+    environment_before = (result.plan.path / ".env").read_bytes()
+    runner = FakePostRunner()
+    execute(
+        result, tools, runner, FakeUI(disallow_input=True), PostInstallOptions(False, True, False)
+    )
+    assert result.migrations == State.FAILED and not runner.calls
+    assert result.warnings == [MESSAGES["connection_changed"]]
+    assert (result.plan.path / ".env").read_bytes() == environment_before
 
 
 def test_connection_display_never_contains_password_or_credential_urls(ready_project):
@@ -635,13 +748,71 @@ def test_interactive_credentials_use_protected_password_and_verified_keys(ready_
     assert "private-password" not in " ".join(ui.messages + ui.warnings)
 
 
-@pytest.mark.parametrize("database", ["", "../outside.sqlite", "/outside.sqlite"])
+@pytest.mark.parametrize(
+    "database",
+    [
+        "",
+        " ",
+        "../outside.sqlite",
+        "/outside.sqlite",
+        ":memory:",
+        " :memory: ",
+        "file::memory:?cache=shared",
+        "file:database/database.sqlite?mode=memory",
+        "sqlite:///:memory:",
+        "sqlite+aiosqlite:///:memory:",
+    ],
+)
 def test_sqlite_connection_must_remain_local(database):
-    """Verify rejection of missing or non-local SQLite connection paths.
+    """Verify rejection of missing, non-local, or memory-backed SQLite paths.
 
     Parameters
     ----------
     database : str
-        Missing or non-local SQLite filename that must fail readiness.
+        SQLite filename or memory marker that must fail persistence readiness.
     """
     assert not connection_ready({"DB_CONNECTION": "sqlite", "DB_DATABASE": database})
+
+
+@pytest.mark.parametrize("database", [":memory:", "file::memory:?cache=shared"])
+@pytest.mark.parametrize("encoding", ["raw", "str", "base64"])
+@pytest.mark.parametrize("no_interaction", [True, False])
+def test_memory_sqlite_migrations_fail_before_process_or_connection_prompts(
+    ready_project, database, encoding, no_interaction
+):
+    """Reject nonpersistent SQLite without executing migrations or requesting server fields.
+
+    Parameters
+    ----------
+    ready_project : tuple[InstallationResult, Prerequisites]
+        Verified synthetic application result and executable prerequisites.
+    database : str
+        In-memory SQLite marker or URI that cannot retain installed schema.
+    encoding : str
+        Raw, string-prefixed, or base64 encoding used by the environment value.
+    no_interaction : bool
+        Whether prompting is disabled for the requested migration operation.
+    """
+    result, tools = ready_project
+    path = result.plan.path / ".env"
+    if encoding == "base64":
+        set_literal_env(path, "DB_DATABASE", database)
+    else:
+        from dotenv import set_key
+
+        value = f"str:{database}" if encoding == "str" else database
+        set_key(path, "DB_DATABASE", value, quote_mode="always")
+    environment_before = path.read_bytes()
+    runner = FakePostRunner()
+    execute(
+        result,
+        tools,
+        runner,
+        FakeUI(disallow_input=True),
+        PostInstallOptions(False, True, False),
+        no_interaction=no_interaction,
+    )
+    assert result.migrations == State.FAILED and not runner.calls
+    assert result.creation == State.COMPLETED and result.plan.path.is_dir()
+    assert result.warnings == [MESSAGES["sqlite_path_invalid"]]
+    assert path.read_bytes() == environment_before

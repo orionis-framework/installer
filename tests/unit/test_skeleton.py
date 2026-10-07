@@ -18,7 +18,7 @@ from orionis_installer.exceptions import (
     ValidationError,
 )
 from orionis_installer.messages import MESSAGES
-from orionis_installer.models import InstallationPlan
+from orionis_installer.models import STACKS, InstallationPlan, SkeletonSource, Stack
 from orionis_installer.skeleton import (
     clone_skeleton,
     publish,
@@ -478,7 +478,7 @@ def test_symlinks_are_rejected_and_foreign_target_is_preserved(template, tmp_pat
 class OfflineCloneRunner:
     """Inject explicit offline clone responses through the process seam."""
 
-    def __init__(self, revision="a" * 40, failure=False):
+    def __init__(self, revision="a" * 40, failure=False, head=None):
         """Initialize controlled clone responses and captured process calls.
 
         Parameters
@@ -487,13 +487,18 @@ class OfflineCloneRunner:
             Simulated clone revision reported by Git.
         failure : bool, optional
             Simulate a clone process failure.
+        head : str or None, optional
+            Reported symbolic HEAD, inferred from the clone branch when omitted.
+            An empty string simulates the process failure for detached HEAD.
         """
         self.calls = []
         self.revision = revision
         self.failure = failure
+        self.head = head
+        self.cloned_branch = None
 
     def run(self, arguments, *, cwd, timeout):
-        """Simulate a clone into staging or return its configured revision.
+        """Simulate a clone, symbolic branch check, or provenance revision lookup.
 
         Parameters
         ----------
@@ -507,37 +512,47 @@ class OfflineCloneRunner:
         Returns
         -------
         SimpleNamespace
-            Empty clone output or the configured revision in stdout.
+            Empty clone output, the selected branch, or configured revision in stdout.
 
         Raises
         ------
         ProcessError
-            If the configured clone operation should fail.
+            If cloning should fail or the simulated HEAD is detached.
         """
         self.calls.append((arguments, cwd, timeout))
         if "clone" in arguments:
             if self.failure:
                 raise ProcessError("Offline injected clone failure")
+            self.cloned_branch = arguments[arguments.index("--branch") + 1]
             staging = Path(arguments[-1])
             shutil.copytree(FIXTURE, staging, dirs_exist_ok=True)
             (staging / ".git").mkdir()
             (staging / ".git" / "index").write_text("fixture index", encoding="utf-8")
             return SimpleNamespace(stdout="")
+        if arguments[1] == "symbolic-ref":
+            if self.head == "":
+                raise ProcessError("Offline detached HEAD fixture")
+            head = self.head if self.head is not None else f"refs/heads/{self.cloned_branch}"
+            return SimpleNamespace(stdout=head + "\n")
         return SimpleNamespace(stdout=self.revision + "\n")
 
 
-def test_clone_uses_only_official_master_and_removes_only_git(tmp_path):
-    """Verify that cloning selects official master and removes only its Git directory.
+@pytest.mark.parametrize("stack", list(Stack))
+def test_clone_uses_selected_source_and_removes_only_git(tmp_path, stack):
+    """Verify that cloning selects the exact stack branch and removes only Git metadata.
 
     Parameters
     ----------
     tmp_path : Path
         Disposable directory supplied by pytest.
+    stack : Stack
+        Catalog entry whose repository and exact branch should be cloned.
     """
     staging = tmp_path / "staging with spaces"
     staging.mkdir()
     runner = OfflineCloneRunner()
-    assert clone_skeleton(staging, Path("trusted-git"), runner) == "a" * 40
+    source = STACKS[stack]
+    assert clone_skeleton(staging, Path("trusted-git"), runner, source=source) == "a" * 40
     arguments, cwd, timeout = runner.calls[0]
     assert arguments == [
         Path("trusted-git"),
@@ -546,16 +561,67 @@ def test_clone_uses_only_official_master_and_removes_only_git(tmp_path):
         "1",
         "--single-branch",
         "--branch",
-        "master",
+        source.branch,
         "--no-recurse-submodules",
-        "https://github.com/orionis-framework/skeleton.git",
+        source.repository,
         staging,
     ]
     assert cwd == staging.parent and timeout == 180
+    assert runner.calls[1] == (
+        [Path("trusted-git"), "symbolic-ref", "--quiet", "HEAD"],
+        staging,
+        15,
+    )
+    assert runner.calls[2][0] == [Path("trusted-git"), "rev-parse", "HEAD"]
     assert not (staging / ".git").exists()
     assert (staging / ".gitignore").is_file()
     assert (staging / "LICENCE").read_text(encoding="utf-8").startswith("Synthetic fixture")
     assert (staging / "README.md").is_file()
+
+
+def test_clone_honors_repository_and_branch_from_source_metadata(tmp_path):
+    """Verify that catalog metadata controls both the repository and the branch.
+
+    Parameters
+    ----------
+    tmp_path : Path
+        Disposable directory containing the simulated clone destination.
+    """
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    source = SkeletonSource(
+        "https://example.test/custom-template", "release/custom", "Custom", "Fixture source"
+    )
+    runner = OfflineCloneRunner()
+    clone_skeleton(staging, Path("trusted-git"), runner, source=source)
+    arguments = runner.calls[0][0]
+    assert arguments[arguments.index("--branch") + 1] == source.branch
+    assert arguments[-2] == source.repository
+
+
+@pytest.mark.parametrize("stack", list(Stack))
+@pytest.mark.parametrize("head", ["", "refs/heads/main", "refs/tags/blank_1.x"])
+def test_clone_rejects_detached_or_different_branch_before_recording_revision(
+    tmp_path, stack, head
+):
+    """Reject tag checkouts and incorrect branches before reading the provenance SHA.
+
+    Parameters
+    ----------
+    tmp_path : Path
+        Disposable directory containing the controlled clone destination.
+    stack : Stack
+        Exact selected source branch required for provenance.
+    head : str
+        Detached or incorrect symbolic reference returned by the Git fixture.
+    """
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    runner = OfflineCloneRunner(head=head)
+    with pytest.raises(CompatibilityError, match="selected Git branch"):
+        clone_skeleton(staging, Path("trusted-git"), runner, source=STACKS[stack])
+    assert not any("rev-parse" in arguments for arguments, _cwd, _timeout in runner.calls)
+    assert (staging / ".git").is_dir()
 
 
 @pytest.mark.parametrize("revision", ["", "not-sha", "g" * 40, "a" * 39, "a" * 41])

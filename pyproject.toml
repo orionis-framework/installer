@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "orionis-installer"
-version = "0.1.0"
+version = "0.2.0"
 description = "Create Orionis applications with isolated Python environments."
 readme = "README.md"
 requires-python = ">=3.14"
@@ -35,6 +35,7 @@ dev = [
     "ruff>=0.16.10,<0.17",
     "mypy>=2.4,<3",
     "build>=1.6.1,<2",
+    "pyclean>=3.7.0",
 ]
 
 [tool.setuptools.packages.find]

@@ -1,4 +1,4 @@
-"""Download only the official branch into an exclusively owned staging directory."""
+"""Download the selected stack branch into an exclusively owned staging directory."""
 
 import os
 import shutil
@@ -8,9 +8,14 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-from orionis_installer.exceptions import Cancelled, CompatibilityError, ValidationError
+from orionis_installer.exceptions import (
+    Cancelled,
+    CompatibilityError,
+    ProcessError,
+    ValidationError,
+)
 from orionis_installer.messages import MESSAGES
-from orionis_installer.models import SKELETON_BRANCH, SKELETON_URL
+from orionis_installer.models import DEFAULT_STACK, STACKS, SkeletonSource
 from orionis_installer.validation import is_redirect, validate_destination
 
 
@@ -232,8 +237,10 @@ def publish(
         child.rename(destination / child.name)
 
 
-def clone_skeleton(staging: Path, git: Path, runner: object) -> str:
-    """Clone official skeleton master and preserve its verified provenance SHA.
+def clone_skeleton(
+    staging: Path, git: Path, runner: object, *, source: SkeletonSource | None = None
+) -> str:
+    """Clone the selected stack's exact branch and preserve its provenance SHA.
 
     Parameters
     ----------
@@ -243,6 +250,8 @@ def clone_skeleton(staging: Path, git: Path, runner: object) -> str:
         Trusted native Git executable.
     runner : object
         Process component exposing the isolated run interface.
+    source : SkeletonSource or None, optional
+        Catalog source to clone, defaulting to the Blank stack.
 
     Returns
     -------
@@ -252,10 +261,11 @@ def clone_skeleton(staging: Path, git: Path, runner: object) -> str:
     Raises
     ------
     CompatibilityError
-        If the downloaded tree or reported revision violates the contract.
+        If the downloaded tree, checked-out branch, or revision violates the contract.
     ProcessError
-        If cloning master or reading its revision fails.
+        If cloning the selected branch or reading its revision fails.
     """
+    source = STACKS[DEFAULT_STACK] if source is None else source
     runner.run(  # type: ignore[attr-defined]
         [
             git,
@@ -264,15 +274,27 @@ def clone_skeleton(staging: Path, git: Path, runner: object) -> str:
             "1",
             "--single-branch",
             "--branch",
-            SKELETON_BRANCH,
+            source.branch,
             "--no-recurse-submodules",
-            SKELETON_URL,
+            source.repository,
             staging,
         ],
         cwd=staging.parent,
         timeout=180,
     )
     validate_tree(staging)
+    # Git's --branch also accepts tags. Require the selected local branch before
+    # recording provenance, because a tag checkout leaves HEAD detached.
+    try:
+        branch = runner.run(  # type: ignore[attr-defined]
+            [git, "symbolic-ref", "--quiet", "HEAD"], cwd=staging, timeout=15
+        ).stdout.strip()
+    except ProcessError as exc:
+        raise CompatibilityError(
+            MESSAGES["source_branch_invalid"].format(branch=source.branch)
+        ) from exc
+    if branch != f"refs/heads/{source.branch}":
+        raise CompatibilityError(MESSAGES["source_branch_invalid"].format(branch=source.branch))
     revision = runner.run(  # type: ignore[attr-defined]
         [git, "rev-parse", "HEAD"], cwd=staging, timeout=15
     ).stdout.strip()

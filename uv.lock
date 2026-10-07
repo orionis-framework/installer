@@ -324,7 +324,7 @@ wheels = [
 
 [[package]]
 name = "orionis-installer"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "packaging" },
@@ -339,6 +339,7 @@ dependencies = [
 dev = [
     { name = "build" },
     { name = "mypy" },
+    { name = "pyclean" },
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "ruff" },
@@ -358,6 +359,7 @@ requires-dist = [
 dev = [
     { name = "build", specifier = ">=1.6.1,<2" },
     { name = "mypy", specifier = ">=2.4,<3" },
+    { name = "pyclean", specifier = ">=3.7.0" },
     { name = "pytest", specifier = ">=9.1.1,<10" },
     { name = "pytest-cov", specifier = ">=7.1,<8" },
     { name = "ruff", specifier = ">=0.16.10,<0.17" },
@@ -400,6 +402,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/7d/ea/39b988c938f75cb75d7045b5c69f8bfed47ee2152c8837fb403de29d6fb8/prompt_toolkit-3.0.53.tar.gz", hash = "sha256:9ec8a0ad96d5c56148b3f914aa79c1564c3fde5d2e6b876e7bc327e353cf8fa6", size = 435492, upload-time = "2026-07-26T20:56:14.758Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/54/6f/84908cad2d6aa5144abcf7b42709fe4fdb459bc640ec7ac5786e7693dabc/prompt_toolkit-3.0.53-py3-none-any.whl", hash = "sha256:01c0891d7f9237d5e339f7d3e42cdae80b7534abb1c7c0e3352efba6231492f2", size = 392288, upload-time = "2026-07-26T20:56:12.512Z" },
+]
+
+[[package]]
+name = "pyclean"
+version = "3.7.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/8b/cc/1039d7423a4fe961a36c41c985cf7c1a84270de922d4cc82e16494c7a8b5/pyclean-3.7.0.tar.gz", hash = "sha256:f4605562684fe721d79cfb92842d9d993d1aa7e9a1d13f316e45b29d02d9946b", size = 27580, upload-time = "2026-05-23T01:44:06.561Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/6d/5d/38264b704ed3dd35c765dda435118cf9a249048bd638fbd46d3fd51a9146/pyclean-3.7.0-py3-none-any.whl", hash = "sha256:76c1688c1a976889d526c1a2623107f4bc746ce26538f184f041422d91653858", size = 28374, upload-time = "2026-05-23T01:44:05.483Z" },
 ]
 
 [[package]]

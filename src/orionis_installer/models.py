@@ -3,13 +3,109 @@
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from orionis_installer.exceptions import ValidationError
 from orionis_installer.messages import MESSAGES
 
 DEFAULT_DESCRIPTION = "A modern application built with Orionis Framework."
-SKELETON_URL = "https://github.com/orionis-framework/skeleton.git"
-SKELETON_BRANCH = "master"
+
+
+class Stack(StrEnum):
+    """Enumerate the application stacks available in the source catalog."""
+
+    BLANK = "blank"
+    SSR = "ssr"
+
+
+@dataclass(frozen=True)
+class SkeletonSource:
+    """Describe a stack's repository, exact branch, and presentation metadata.
+
+    Attributes
+    ----------
+    repository : str
+        Repository cloned to create an application with this stack.
+    branch : str
+        Exact branch to clone, without falling back to another branch.
+    label : str
+        Human-readable stack name presented during installation.
+    description : str
+        Short explanation of the starting application provided by this stack.
+    """
+
+    repository: str
+    branch: str
+    label: str
+    description: str
+
+    def __post_init__(self) -> None:
+        """Reject catalog mistakes before any repository is downloaded.
+
+        Raises
+        ------
+        ValidationError
+            If metadata is empty or contains controls, the HTTPS URL includes
+            credentials, or the branch violates Git's explicit reference syntax.
+        """
+        metadata = (self.repository, self.branch, self.label, self.description)
+        if any(
+            not isinstance(value, str)
+            or not value
+            or value != value.strip()
+            or any(ord(character) < 32 or 127 <= ord(character) < 160 for character in value)
+            for value in metadata
+        ):
+            raise ValidationError(MESSAGES["skeleton_source_invalid"])
+        try:
+            repository = urlsplit(self.repository)
+            port = repository.port
+            valid_repository = (
+                repository.scheme == "https"
+                and bool(repository.hostname)
+                and repository.username is None
+                and repository.password is None
+                and (port is None or port > 0)
+                and not repository.query
+                and not repository.fragment
+                and "\\" not in self.repository
+                and not any(character.isspace() for character in self.repository)
+            )
+        except ValueError:
+            valid_repository = False
+        invalid_branch = (
+            self.branch in {"@", "HEAD"}
+            or self.branch.startswith(("-", "/"))
+            or self.branch.endswith(("/", "."))
+            or any(token in self.branch for token in ("..", "@{", "//"))
+            or any(character in "~^:?*[\\" or character.isspace() for character in self.branch)
+            or any(
+                component.startswith(".") or component.endswith(".lock")
+                for component in self.branch.split("/")
+            )
+        )
+        if not valid_repository or invalid_branch:
+            raise ValidationError(MESSAGES["skeleton_source_invalid"])
+
+
+STACKS: dict[Stack, SkeletonSource] = {
+    Stack.BLANK: SkeletonSource(
+        repository="https://github.com/orionis-framework/skeleton",
+        branch="blank_1.x",
+        label="Blank",
+        description="A minimal foundation for building your application from scratch.",
+    ),
+    Stack.SSR: SkeletonSource(
+        repository="https://github.com/orionis-framework/skeleton",
+        branch="ssr_1.x",
+        label="SSR",
+        description="A starting point for applications with server-side rendering.",
+    ),
+}
+DEFAULT_STACK = Stack.BLANK
+# Backward-compatible aliases describe the default source; selected plans use source.
+SKELETON_URL = STACKS[DEFAULT_STACK].repository
+SKELETON_BRANCH = STACKS[DEFAULT_STACK].branch
 
 
 class Storage(StrEnum):
@@ -69,6 +165,8 @@ class InstallationPlan:
         Effective disk when installing all storage SDKs.
     default_database : Database or None
         Effective connection when installing all database drivers.
+    stack : Stack
+        Source catalog entry defining the starting application's repository and branch.
     """
 
     name: str
@@ -80,6 +178,7 @@ class InstallationPlan:
     database: Database = Database.SQLITE
     default_storage: Storage | None = None
     default_database: Database | None = None
+    stack: Stack = DEFAULT_STACK
 
     def __post_init__(self) -> None:
         """Validate metadata and driver defaults, then normalize the destination.
@@ -87,10 +186,12 @@ class InstallationPlan:
         Raises
         ------
         ValidationError
-            If metadata is invalid, drivers are unsupported, or defaults conflict.
+            If metadata is invalid, the stack or drivers are unsupported, or defaults conflict.
         """
         from orionis_installer.validation import validate_email, validate_name, validate_text
 
+        if not isinstance(self.stack, Stack) or self.stack not in STACKS:
+            raise ValidationError(MESSAGES["plan_stack_invalid"])
         if not isinstance(self.storage, Storage) or not isinstance(self.database, Database):
             raise ValidationError(MESSAGES["plan_drivers_invalid"])
         validate_name(self.name)
@@ -107,6 +208,17 @@ class InstallationPlan:
             raise ValidationError(MESSAGES["default_database_invalid"])
         validate_text(str(self.path), MESSAGES["destination_label"])
         object.__setattr__(self, "path", self.path.absolute())
+
+    @property
+    def source(self) -> SkeletonSource:
+        """Resolve the selected stack's repository and branch from the catalog.
+
+        Returns
+        -------
+        SkeletonSource
+            Immutable source metadata for the validated stack selection.
+        """
+        return STACKS[self.stack]
 
     @property
     def active_storage(self) -> Storage:
@@ -183,7 +295,7 @@ class InstallationResult:
     git : State
         Current Git initialization state.
     migrations : State
-        Current migration and seeding state.
+        Current schema migration state.
     editor : State
         Current editor launch state.
     python_version : str or None

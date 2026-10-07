@@ -1,20 +1,23 @@
 """Test terminal behavior with controlled streams and prompt-toolkit input."""
 
-from io import StringIO
+from io import BytesIO, StringIO, TextIOWrapper
 from pathlib import Path
 
 import pytest
+from prompt_toolkit import Application
 from prompt_toolkit.application import create_app_session
+from prompt_toolkit.data_structures import Size
 from prompt_toolkit.document import Document
+from prompt_toolkit.formatted_text import fragment_list_to_text
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
 from prompt_toolkit.validation import ValidationError as PromptValidationError
 
 from orionis_installer.exceptions import ValidationError
-from orionis_installer.models import InstallationPlan, InstallationResult, State
+from orionis_installer.models import InstallationPlan, InstallationResult, Stack, State
 from orionis_installer.ui import UI
 from orionis_installer.ui.output import Output
-from orionis_installer.ui.prompts import InputValidator, Prompts
+from orionis_installer.ui.prompts import InputValidator, Prompts, selector_text
 from orionis_installer.ui.theme import terminal_text
 from orionis_installer.validation import validate_name
 
@@ -79,7 +82,9 @@ def test_summary_shows_effective_driver_and_required_extra(tmp_path):
     assert "database,factories,storage" in rendered
     assert "Default disk" in rendered and "Local" in rendered
     assert "Default connection" in rendered and "SQLite" in rendered
-    assert "skeleton@master" in rendered
+    assert plan.source.branch in rendered
+    assert "Stack" in rendered and plan.source.label in rendered
+    assert "master" not in rendered
 
 
 def test_final_reports_real_states_versions_and_recovery(tmp_path):
@@ -109,7 +114,8 @@ def test_final_reports_real_states_versions_and_recovery(tmp_path):
     assert "failed" in rendered and "skipped" in rendered
     assert "Application ready." not in rendered
     assert "uv run python -B reactor serve" in rendered
-    assert "uv run python -B reactor migrate --seed" in rendered
+    assert "uv run python -B reactor migrate" in rendered
+    assert "--seed" not in rendered
     assert str(plan.path) in rendered
 
 
@@ -129,7 +135,7 @@ def test_final_completed_migrations_omit_migration_command(tmp_path):
         published=True,
     )
     Output(no_color=True, file=stream, width=130).final(result)
-    assert "migrate --seed" not in stream.getvalue()
+    assert "reactor migrate" not in stream.getvalue()
 
 
 def test_ui_rejects_non_tty_before_prompt(monkeypatch):
@@ -308,4 +314,278 @@ def test_long_destination_and_commands_remain_complete_in_narrow_output(tmp_path
     assert "Destination: " + str(path) in lines
     assert "cd " + quote_directory(path) in lines
     assert "uv run python -B reactor serve" in lines
-    assert "uv run python -B reactor migrate --seed" in lines
+    assert "uv run python -B reactor migrate" in lines
+
+
+@pytest.mark.parametrize("stack", list(Stack))
+def test_summary_renders_selected_stack_and_complete_repository(tmp_path, stack):
+    """Show the exact chosen source without abbreviation in the review panel.
+
+    Parameters
+    ----------
+    tmp_path : Path
+        Temporary parent directory reserved for this test project.
+    stack : Stack
+        Catalog entry whose repository and branch must be visible.
+    """
+    stream = StringIO()
+    plan = InstallationPlan("sample", tmp_path / "sample", stack=stack)
+    Output(no_color=True, file=stream, width=104).summary(plan)
+    rendered = stream.getvalue()
+    assert plan.source.repository in rendered
+    assert plan.source.branch in rendered
+    assert plan.source.label in rendered
+    assert "…" not in rendered
+    assert "\x1b" not in rendered
+
+
+def test_summary_folds_long_literal_metadata_without_markup(tmp_path):
+    """Keep long metadata complete while displaying Rich-like text literally.
+
+    Parameters
+    ----------
+    tmp_path : Path
+        Temporary parent directory reserved for this test project.
+    """
+    stream = StringIO()
+    description = "[bold]" + "long-description-" * 9 + "END[/bold]"
+    plan = InstallationPlan("sample", tmp_path / "sample", description=description)
+    Output(no_color=True, file=stream, width=36).summary(plan)
+    rendered = stream.getvalue()
+    compact = "".join(line.strip(" │|") for line in rendered.splitlines()).replace(" ", "")
+    assert description in compact
+    assert "…" not in rendered
+    assert "\x1b" not in rendered
+
+
+def test_selector_active_marker_default_and_literal_caption():
+    """Keep selection and defaults distinct without interpreting caption markup."""
+    choices = [("blank", "Blank"), ("ssr", "[bold]SSR[/bold]\x1b[2J")]
+    fragments = selector_text(choices, 1, "blank")
+    rendered = fragment_list_to_text(fragments)
+    assert "> 02" in rendered
+    assert "Blank  (default)" in rendered
+    assert "[bold]SSR[/bold]" in rendered
+    assert "\x1b" not in rendered
+    assert any(style == "class:selected" and "SSR" in value for style, value in fragments)
+
+
+@pytest.mark.parametrize(
+    ("keys", "expected"),
+    [("\x1b[C\r", "b"), ("\t\r", "b"), ("\x1b[Z\r", "c")],
+)
+def test_selector_additional_keyboard_navigation(keys, expected):
+    """Support horizontal arrows, Tab, and Shift+Tab for keyboard navigation.
+
+    Parameters
+    ----------
+    keys : str
+        Keyboard bytes sent through a controlled input pipe.
+    expected : str
+        Machine value accepted after navigation.
+    """
+    with (
+        create_pipe_input() as input_stream,
+        create_app_session(input=input_stream, output=DummyOutput()),
+    ):
+        input_stream.send_text(keys)
+        assert (
+            Prompts(no_color=True).select(
+                "Choose", [("a", "One"), ("b", "Two"), ("c", "Three")], "a"
+            )
+            == expected
+        )
+
+
+@pytest.mark.parametrize(("keys", "expected"), [("y\r", True), ("n\r", False)])
+def test_confirmation_shortcuts_remain_reviewable_until_enter(keys, expected):
+    """Select a direct Yes/No answer before Enter accepts the confirmation.
+
+    Parameters
+    ----------
+    keys : str
+        Confirmation shortcut followed by explicit acceptance.
+    expected : bool
+        Decision accepted by the confirmation application.
+    """
+    with (
+        create_pipe_input() as input_stream,
+        create_app_session(input=input_stream, output=DummyOutput()),
+    ):
+        input_stream.send_text(keys)
+        assert Prompts(no_color=True).confirm("Continue?", not expected) is expected
+
+
+def test_selector_rejects_ambiguous_duplicate_values():
+    """Reject duplicate machine values before opening the selection application."""
+    with pytest.raises(ValueError, match="unique machine values"):
+        Prompts(no_color=True).select("Choose", [("a", "One"), ("a", "Two")], "a")
+
+
+def test_non_terminal_progress_reports_real_stage_transitions():
+    """Write stable, sanitized logs without animation or fabricated percentages."""
+    stream = StringIO()
+    output = Output(no_color=True, file=stream, width=80)
+    with output.progress() as progress:
+        progress.step("Clone [bold]source[/bold]\x1b[2J")
+        assert progress.states == [State.RUNNING, State.PENDING, State.PENDING, State.PENDING]
+        progress.step("Configure")
+        assert progress.states[0] == State.COMPLETED
+        progress.step("Synchronize")
+        progress.step("Verify")
+    assert progress.states == [State.COMPLETED] * 4
+    rendered = stream.getvalue()
+    assert "01/04" in rendered and "04/04" in rendered
+    assert "[bold]source[/bold]" in rendered
+    assert "completed and verified" in rendered
+    assert "\x1b" not in rendered and "%" not in rendered
+
+
+@pytest.mark.parametrize(
+    ("exception", "state"), [(ValueError("failure"), State.FAILED), (EOFError(), State.CANCELLED)]
+)
+def test_progress_preserves_failure_or_cancellation(exception, state):
+    """Mark only the active stage interrupted and propagate its original exception.
+
+    Parameters
+    ----------
+    exception : BaseException
+        Failure or cancellation raised inside the controlled progress context.
+    state : State
+        Expected final state of the interrupted active operation.
+    """
+    stream = StringIO()
+    with pytest.raises(type(exception)), Output(no_color=True, file=stream).progress() as progress:
+        progress.step("Clone")
+        progress.step("Configure")
+        raise exception
+    assert progress.states == [State.COMPLETED, state, State.PENDING, State.PENDING]
+    assert "Installation interrupted" in stream.getvalue()
+    assert "All installation stages completed" not in stream.getvalue()
+
+
+@pytest.mark.parametrize("width", [24, 36, 80])
+def test_progress_timeline_fits_narrow_output(width):
+    """Keep timeline states and diagnostics readable without truncation.
+
+    Parameters
+    ----------
+    width : int
+        Controlled console width used to check progress wrapping.
+    """
+    stream = StringIO()
+    output = Output(no_color=True, file=stream, width=width)
+    progress = output.progress()
+    progress.current = 2
+    progress.states = [State.COMPLETED, State.COMPLETED, State.RUNNING, State.PENDING]
+    progress.detail = "Synchronizing application dependencies."
+    progress.started = 1.0
+    output.console.print(progress)
+    rendered = stream.getvalue()
+    assert "…" not in rendered and "\x1b" not in rendered
+    assert all(len(line) <= width for line in rendered.splitlines())
+
+
+def test_ascii_output_supports_banner_rules_and_status_panels(tmp_path):
+    """Render every output surface safely when a legacy stream requires ASCII.
+
+    Parameters
+    ----------
+    tmp_path : Path
+        Temporary parent directory reserved for this test project.
+    """
+    buffer = BytesIO()
+    stream = TextIOWrapper(buffer, encoding="ascii")
+    output = Output(no_color=True, file=stream, width=80)
+    plan = InstallationPlan("sample", tmp_path / "sample")
+    output.banner()
+    output.section("Application", "Choose a starting point.")
+    output.summary(plan)
+    output.error("Example failure.")
+    output.final(InstallationResult(plan, creation=State.COMPLETED, published=True))
+    stream.flush()
+    rendered = buffer.getvalue().decode("ascii")
+    assert "ORIONIS" in rendered
+    assert "Example failure." in rendered
+    assert "reactor serve" in rendered
+    assert "\x1b" not in rendered
+
+
+@pytest.mark.parametrize("width", [24, 80])
+def test_selector_renders_active_guidance_in_narrow_terminal(monkeypatch, width):
+    """Render the selected option and its complete safe guidance in an actual layout.
+
+    Parameters
+    ----------
+    monkeypatch : pytest.MonkeyPatch
+        Fixture attaching a screen observer to the prompt application.
+    width : int
+        Terminal width used by the prompt-toolkit output adapter.
+    """
+    screens = []
+    real_run = Application.run
+
+    class NarrowOutput(DummyOutput):
+        """Expose a controlled terminal size for the real prompt renderer."""
+
+        def get_size(self):
+            """Return the controlled size without reading a physical terminal.
+
+            Returns
+            -------
+            Size
+                Terminal dimensions used by the prompt renderer.
+            """
+            return Size(rows=24, columns=width)
+
+    def observe(application):
+        """Capture the visible screen after prompt-toolkit completes a redraw.
+
+        Parameters
+        ----------
+        application : Application
+            Running selector whose virtual screen is ready for inspection.
+        """
+        screen = application.renderer.last_rendered_screen
+        if screen is not None:
+            lines = []
+            for row in screen.data_buffer.values():
+                line = "".join(cell.char for _, cell in sorted(row.items())).rstrip()
+                if line:
+                    lines.append(line)
+            screens.append("\n".join(lines))
+
+    def run(application):
+        """Attach a screen observer and run the real keyboard selection.
+
+        Parameters
+        ----------
+        application : Application
+            Selector application constructed by the production prompt interface.
+
+        Returns
+        -------
+        str
+            Accepted machine value returned by the real application.
+        """
+        application.after_render += observe
+        return real_run(application)
+
+    monkeypatch.setattr(Application, "run", run)
+    with (
+        create_pipe_input() as input_stream,
+        create_app_session(input=input_stream, output=NarrowOutput()),
+    ):
+        input_stream.send_text("\r")
+        value = Prompts(no_color=True).select(
+            "Choose a stack\x1b[2J",
+            [("blank", "Blank"), ("ssr", "SSR")],
+            "ssr",
+            descriptions={"ssr": "Server rendered pages. [literal]\x1b]0;unsafe\x07"},
+        )
+    assert value == "ssr"
+    visible = "".join(screens).replace("\n", "")
+    assert "SSR" in visible and "> 02" in visible
+    assert "Server rendered pages." in visible and "[literal]" in visible
+    assert "unsafe" not in visible and "\x1b" not in visible
+    assert all(len(line) <= width for screen in screens for line in screen.splitlines())

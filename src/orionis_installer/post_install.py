@@ -6,7 +6,12 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Protocol
 
-from orionis_installer.configuration import literal_value, read_env, set_literal_env
+from orionis_installer.configuration import (
+    literal_value,
+    read_env,
+    set_literal_env,
+    valid_sqlite_path,
+)
 from orionis_installer.exceptions import Cancelled, CompatibilityError, InstallerError
 from orionis_installer.installer import project_python
 from orionis_installer.messages import MESSAGES
@@ -91,7 +96,7 @@ class PostUI(Protocol):
 
 
 def seeder_safety(root: Path) -> None:
-    """Reject executable seeders before migration or credential mutation.
+    """Inspect a seeder tree independently of schema migration execution.
 
     A generic AST pass cannot certify arbitrary executable code. This is a conservative
     guard that permits only empty modules, docstrings, and pass statements. Other
@@ -199,16 +204,10 @@ def connection_ready(values: dict[str, str]) -> bool:
     Returns
     -------
     bool
-        Whether the SQLite path is local or external credentials are complete.
+        Whether SQLite names a persistent local file or external credentials are complete.
     """
     if values["DB_CONNECTION"] == Database.SQLITE.value:
-        path = Path(values["DB_DATABASE"])
-        return (
-            bool(values["DB_DATABASE"])
-            and not path.anchor
-            and not path.drive
-            and ".." not in path.parts
-        )
+        return valid_sqlite_path(values["DB_DATABASE"])
     server_ready = (
         all(
             values.get(key)
@@ -298,7 +297,10 @@ def _safe_connection_label(value: str) -> str:
 
 
 def _migrate(result: InstallationResult, runner: Runner, ui: PostUI, no_interaction: bool) -> State:
-    """Run the verified application's migration command after seeder safety checks.
+    """Apply schema migrations with the verified application's own interpreter.
+
+    Reactor only runs seeders when its separate ``--seed`` option is supplied.
+    Schema migrations therefore do not require inspecting or executing seeders.
 
     Parameters
     ----------
@@ -319,16 +321,17 @@ def _migrate(result: InstallationResult, runner: Runner, ui: PostUI, no_interact
     Raises
     ------
     CompatibilityError
-        If seeders are unsafe or the effective connection is changed or incomplete.
+        If the effective connection is changed or incomplete, or Python is unavailable.
     InstallerError
         If the application's migration command fails.
     """
     root = result.plan.path
-    seeder_safety(root)
     values = connection_values(root)
     if values["DB_CONNECTION"] != result.plan.active_database.value:
         raise CompatibilityError(MESSAGES["connection_changed"])
     if not connection_ready(values):
+        if values["DB_CONNECTION"] == Database.SQLITE.value:
+            raise CompatibilityError(MESSAGES["sqlite_path_invalid"])
         if no_interaction:
             raise CompatibilityError(MESSAGES["non_interactive_connection_incomplete"])
         if not _connection_prompt(root, ui):
@@ -349,9 +352,9 @@ def _migrate(result: InstallationResult, runner: Runner, ui: PostUI, no_interact
             host=_safe_connection_label(values["DB_HOST"])
         )
     ui.message(label + MESSAGES["migration_data_warning"])
-    # Exact equivalent of `uv run --no-sync python -B reactor migrate --seed`,
+    # Exact equivalent of `uv run --no-sync python -B reactor migrate`,
     # without further syncing or selecting an interpreter from uvx/PATH.
-    runner.run([project_python(root), "-B", "reactor", "migrate", "--seed"], cwd=root, timeout=300)
+    runner.run([project_python(root), "-B", "reactor", "migrate"], cwd=root, timeout=300)
     return State.COMPLETED
 
 

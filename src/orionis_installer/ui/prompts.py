@@ -1,8 +1,10 @@
 """Collect prompt-toolkit input without executing installation callbacks."""
 
-from collections.abc import Callable
+import os
+from collections.abc import Callable, Mapping
 
 from prompt_toolkit import Application, PromptSession
+from prompt_toolkit.data_structures import Point
 from prompt_toolkit.document import Document
 from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.key_binding import KeyBindings
@@ -15,12 +17,58 @@ from prompt_toolkit.validation import ValidationError as PromptValidationError
 from prompt_toolkit.validation import Validator
 
 from orionis_installer.exceptions import InstallerError
-from orionis_installer.ui.messages import MESSAGES
+from orionis_installer.ui.messages import (
+    DATABASE_DESCRIPTIONS,
+    MESSAGES,
+    STORAGE_DESCRIPTIONS,
+)
 from orionis_installer.ui.theme import terminal_text
 
 PROMPT_STYLE = Style.from_dict(
-    {"question": "bold ansicyan", "selected": "bold ansimagenta", "hint": "ansibrightblack"}
+    {
+        "question": "bold #eff1fa",
+        "selected": "bold #eff1fa bg:#2b3550",
+        "marker": "bold #b1a2ff",
+        "number": "#78dce8",
+        "hint": "#929bb0",
+        "default": "#f5ca83",
+        "description": "#b9c3d9",
+    }
 )
+
+
+def selector_text(
+    choices: list[tuple[str, str]], selected: int, default: str, *, inline: bool = False
+) -> FormattedText:
+    """Render selection markers, literal captions, and the default badge.
+
+    Parameters
+    ----------
+    choices : list of tuple of str
+        Ordered machine values and visible captions.
+    selected : int
+        Index of the active choice.
+    default : str
+        Machine value to mark as the proposed default.
+    inline : bool, optional
+        Whether to arrange short confirmation choices on one line.
+
+    Returns
+    -------
+    FormattedText
+        Styled fragments whose selected and default states remain visible without color.
+    """
+    fragments: list[tuple[str, str]] = []
+    for index, (value, caption) in enumerate(choices):
+        active = index == selected
+        fragments.append(("class:marker", "  > " if active else "    "))
+        if not inline:
+            fragments.append(("class:number", f"{index + 1:02d}  "))
+        fragments.append(("class:selected" if active else "", " " + terminal_text(caption) + " "))
+        if value == default:
+            fragments.append(("class:default", MESSAGES["default_marker"]))
+        fragments.append(("", "   " if inline else "\n"))
+    return FormattedText(fragments)
 
 
 class InputValidator(Validator):
@@ -68,7 +116,7 @@ class Prompts:
         no_color : bool, optional
             Whether prompts should use monochrome terminal rendering.
         """
-        self.no_color = no_color
+        self.no_color = no_color or "NO_COLOR" in os.environ
 
     @property
     def color_depth(self) -> ColorDepth:
@@ -77,9 +125,9 @@ class Prompts:
         Returns
         -------
         ColorDepth
-            Monochrome depth without color, or the standard ANSI palette depth.
+            Monochrome depth without color, or the extended ANSI palette depth.
         """
-        return ColorDepth.DEPTH_1_BIT if self.no_color else ColorDepth.DEPTH_4_BIT
+        return ColorDepth.DEPTH_1_BIT if self.no_color else ColorDepth.DEPTH_8_BIT
 
     def text(
         self,
@@ -117,14 +165,27 @@ class Prompts:
             style=PROMPT_STYLE, color_depth=self.color_depth
         )
         return session.prompt(
-            FormattedText([("class:question", terminal_text(label) + ": ")]),
-            default=default,
+            FormattedText(
+                [("class:question", terminal_text(label) + "\n"), ("class:marker", "  > ")]
+            ),
+            default=terminal_text(default),
             validator=InputValidator(validator) if validator else None,
             validate_while_typing=True,
             is_password=password,
+            bottom_toolbar=FormattedText(
+                [("class:hint", MESSAGES["password_hint" if password else "text_hint"])]
+            ),
         )
 
-    def select(self, label: str, choices: list[tuple[str, str]], default: str) -> str:
+    def select(
+        self,
+        label: str,
+        choices: list[tuple[str, str]],
+        default: str,
+        *,
+        descriptions: Mapping[str, str] | None = None,
+        inline: bool = False,
+    ) -> str:
         """Accept a keyboard-selected value while restoring the terminal afterward.
 
         Parameters
@@ -135,6 +196,10 @@ class Prompts:
             Ordered machine values and visible captions.
         default : str
             Machine value initially selected and visibly marked as the default.
+        descriptions : Mapping of str to str or None, optional
+            Contextual explanation for each value, displayed for the active choice.
+        inline : bool, optional
+            Whether to use compact confirmation choices with direct Y/N shortcuts.
 
         Returns
         -------
@@ -144,7 +209,7 @@ class Prompts:
         Raises
         ------
         ValueError
-            If choices are empty or omit the default value.
+            If choices are empty, duplicate machine values, or omit the default.
         KeyboardInterrupt
             If the user presses Ctrl+C.
         EOFError
@@ -153,10 +218,21 @@ class Prompts:
         values = [value for value, _ in choices]
         if not values or default not in values:
             raise ValueError(MESSAGES["invalid_selector"])
+        if len(set(values)) != len(values):
+            raise ValueError(MESSAGES["invalid_selector_duplicate"])
+        if descriptions is None:
+            if label in (MESSAGES["storage"], MESSAGES["default_storage"]):
+                descriptions = STORAGE_DESCRIPTIONS
+            elif label in (MESSAGES["database"], MESSAGES["default_database"]):
+                descriptions = DATABASE_DESCRIPTIONS
+            else:
+                descriptions = {}
         selected = values.index(default)
         bindings = KeyBindings()
 
         @bindings.add("up")
+        @bindings.add("left")
+        @bindings.add("s-tab")
         @bindings.add("k")
         def previous(event: KeyPressEvent) -> None:
             """Move selection to the preceding choice with cyclic navigation.
@@ -171,6 +247,7 @@ class Prompts:
             event.app.invalidate()
 
         @bindings.add("down")
+        @bindings.add("right")
         @bindings.add("j")
         @bindings.add("tab")
         def following(event: KeyPressEvent) -> None:
@@ -195,6 +272,22 @@ class Prompts:
                 Enter key event providing the selector application.
             """
             event.app.exit(result=values[selected])
+
+        if inline and values == ["yes", "no"]:
+
+            @bindings.add("y")
+            @bindings.add("n")
+            def choose_decision(event: KeyPressEvent) -> None:
+                """Select a confirmation shortcut and wait for explicit acceptance.
+
+                Parameters
+                ----------
+                event : KeyPressEvent
+                    Y or N event whose choice remains reviewable before Enter.
+                """
+                nonlocal selected
+                selected = 0 if event.data.lower() == "y" else 1
+                event.app.invalidate()
 
         @bindings.add("c-c")
         def cancel(event: KeyPressEvent) -> None:
@@ -226,17 +319,31 @@ class Prompts:
             FormattedText
                 Styled choice lines for the current selection state.
             """
-            lines: list[tuple[str, str]] = []
-            for index, (_, caption) in enumerate(choices):
-                marker = "> " if index == selected else "  "
-                hint = MESSAGES["default_marker"] if values[index] == default else ""
-                lines.append(
-                    (
-                        "class:selected" if index == selected else "",
-                        marker + terminal_text(caption) + hint + "\n",
-                    )
-                )
-            return FormattedText(lines)
+            return selector_text(choices, selected, default, inline=inline)
+
+        def detail() -> FormattedText:
+            """Display guidance for the currently active option.
+
+            Returns
+            -------
+            FormattedText
+                Sanitized contextual text with space above the navigation hint.
+            """
+            assert descriptions is not None
+            explanation = terminal_text(descriptions.get(values[selected], ""))
+            return FormattedText([("class:description", "  " + explanation + "\n")])
+
+        def cursor() -> Point:
+            """Keep keyboard focus on the active choice when the menu scrolls.
+
+            Returns
+            -------
+            Point
+                Logical menu position associated with the current selection.
+            """
+            return Point(x=2, y=0 if inline else selected)
+
+        control = FormattedTextControl(render, focusable=True, get_cursor_position=cursor)
 
         layout = Layout(
             HSplit(
@@ -245,17 +352,27 @@ class Prompts:
                         FormattedTextControl(
                             FormattedText([("class:question", terminal_text(label))])
                         ),
-                        height=1,
+                        wrap_lines=True,
                     ),
-                    Window(FormattedTextControl(render), height=len(choices)),
+                    Window(height=1),
+                    Window(control, wrap_lines=True),
+                    Window(FormattedTextControl(detail), wrap_lines=True),
                     Window(
                         FormattedTextControl(
-                            FormattedText([("class:hint", MESSAGES["navigation"])])
+                            FormattedText(
+                                [
+                                    (
+                                        "class:hint",
+                                        MESSAGES["confirm_hint" if inline else "navigation"],
+                                    )
+                                ]
+                            )
                         ),
-                        height=1,
+                        wrap_lines=True,
                     ),
                 ]
-            )
+            ),
+            focused_element=control,
         )
         application: Application[str] = Application(
             layout=layout,
@@ -294,6 +411,7 @@ class Prompts:
                 label,
                 [("yes", MESSAGES["yes"]), ("no", MESSAGES["no"])],
                 "yes" if default else "no",
+                inline=True,
             )
             == "yes"
         )

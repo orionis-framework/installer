@@ -6,12 +6,16 @@ from rich.theme import Theme
 
 THEME = Theme(
     {
-        "orionis": "bold magenta",
-        "accent": "cyan",
-        "success": "green",
-        "warning": "yellow",
-        "error": "bold red",
-        "muted": "dim",
+        "orionis": "bold #b1a2ff",
+        "accent": "#78dce8",
+        "success": "#8ce3b0",
+        "warning": "#f5ca83",
+        "error": "bold #ff8d9c",
+        "muted": "#929bb0",
+        "border": "#545f7a",
+        "heading": "bold #eff1fa",
+        "number": "bold #78dce8",
+        "command": "#d9e1f2",
     }
 )
 

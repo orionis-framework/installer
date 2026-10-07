@@ -12,9 +12,10 @@ from packaging.requirements import InvalidRequirement, Requirement
 from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.utils import canonicalize_name
 
+from orionis_installer import __version__
 from orionis_installer.exceptions import CompatibilityError
 from orionis_installer.messages import MESSAGES
-from orionis_installer.models import SKELETON_BRANCH, SKELETON_URL, Database, InstallationPlan
+from orionis_installer.models import Database, InstallationPlan
 
 PORTS = {
     Database.MYSQL: 3306,
@@ -287,6 +288,33 @@ def literal_value(value: str | None) -> str:
     return value
 
 
+def valid_sqlite_path(database: str) -> bool:
+    """Check that SQLite names a persistent local file rather than memory or a URI.
+
+    Parameters
+    ----------
+    database : str
+        Decoded SQLite database filename declared by the application.
+
+    Returns
+    -------
+    bool
+        Whether the path is relative, persistent, and portable across supported platforms.
+    """
+    path = Path(database)
+    normalized = database.strip().lower()
+    return (
+        bool(normalized)
+        and normalized != ":memory:"
+        and not normalized.startswith(("file:", "sqlite:", "sqlite+aiosqlite:"))
+        and not path.anchor
+        and not PureWindowsPath(database).drive
+        and "\\" not in database
+        and ".." not in path.parts
+        and not any(ord(character) < 32 or ord(character) == 127 for character in database)
+    )
+
+
 def configure_environment(root: Path, plan: InstallationPlan) -> None:
     """Create a local environment with verified drivers and pending credentials.
 
@@ -317,14 +345,7 @@ def configure_environment(root: Path, plan: InstallationPlan) -> None:
     if plan.active_database == Database.SQLITE:
         database = literal_value(values["DB_DATABASE"])
         db_path = Path(database)
-        if (
-            not database
-            or db_path.anchor
-            or PureWindowsPath(database).drive
-            or "\\" in database
-            or ".." in db_path.parts
-            or any(ord(c) < 32 or ord(c) == 127 for c in database)
-        ):
+        if not valid_sqlite_path(database):
             raise CompatibilityError(MESSAGES["sqlite_path_invalid"])
         if not (root / db_path).parent.is_dir():
             raise CompatibilityError(MESSAGES["sqlite_directory_missing"])
@@ -371,7 +392,7 @@ def ensure_gitignore(root: Path) -> None:
 
 
 def write_provenance(root: Path, revision: str, plan: InstallationPlan) -> None:
-    """Record the inspected template revision and selected installation drivers.
+    """Record the selected stack, exact source revision, and installation drivers.
 
     Parameters
     ----------
@@ -380,13 +401,14 @@ def write_provenance(root: Path, revision: str, plan: InstallationPlan) -> None:
     revision : str
         Cloned skeleton's verified Git commit identifier.
     plan : InstallationPlan
-        Effective drivers and requested dependency extras to record.
+        Selected stack, effective drivers, and requested dependency extras to record.
     """
     data = {
-        "skeleton": SKELETON_URL,
-        "branch": SKELETON_BRANCH,
+        "stack": plan.stack.value,
+        "skeleton": plan.source.repository,
+        "branch": plan.source.branch,
         "sha": revision,
-        "installer": "1.0.0",
+        "installer": __version__,
         "python_target": "3.14",
         "extras": list(plan.extras),
         "storage": plan.active_storage.value,

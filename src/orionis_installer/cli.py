@@ -10,16 +10,25 @@ from orionis_installer.exceptions import Cancelled, InstallerError
 from orionis_installer.installer import Installer
 from orionis_installer.models import (
     DEFAULT_DESCRIPTION,
+    DEFAULT_STACK,
+    STACKS,
     Database,
     InstallationPlan,
     PostInstallOptions,
+    Stack,
     Storage,
 )
 from orionis_installer.post_install import run_post_install
 from orionis_installer.prerequisites import check_prerequisites
 from orionis_installer.processes import Runner
 from orionis_installer.ui import UI
-from orionis_installer.ui.messages import CLI_HELP, DATABASE_CHOICES, MESSAGES, STORAGE_CHOICES
+from orionis_installer.ui.messages import (
+    CLI_HELP,
+    DATABASE_CHOICES,
+    MESSAGES,
+    STACK_CHOICES,
+    STORAGE_CHOICES,
+)
 from orionis_installer.validation import (
     validate_destination,
     validate_email,
@@ -97,47 +106,78 @@ def new(
         str | None,
         typer.Argument(help=CLI_HELP["name"]),
     ] = None,
-    path: Annotated[Path | None, typer.Option("--path", help=CLI_HELP["path"])] = None,
+    stack: Annotated[
+        Stack | None,
+        typer.Option(
+            "--stack", case_sensitive=False, help=CLI_HELP["stack"], rich_help_panel="Application"
+        ),
+    ] = None,
+    path: Annotated[
+        Path | None,
+        typer.Option("--path", help=CLI_HELP["path"], rich_help_panel="Application"),
+    ] = None,
     description: Annotated[
-        str | None, typer.Option("--description", help=CLI_HELP["description"])
+        str | None,
+        typer.Option("--description", help=CLI_HELP["description"], rich_help_panel="Application"),
     ] = None,
     author_name: Annotated[
-        str | None, typer.Option("--author-name", help=CLI_HELP["author_name"])
+        str | None,
+        typer.Option("--author-name", help=CLI_HELP["author_name"], rich_help_panel="Application"),
     ] = None,
     author_email: Annotated[
-        str | None, typer.Option("--author-email", help=CLI_HELP["author_email"])
+        str | None,
+        typer.Option(
+            "--author-email", help=CLI_HELP["author_email"], rich_help_panel="Application"
+        ),
     ] = None,
-    storage: Annotated[Storage | None, typer.Option("--storage", help=CLI_HELP["storage"])] = None,
+    storage: Annotated[
+        Storage | None,
+        typer.Option("--storage", help=CLI_HELP["storage"], rich_help_panel="Services"),
+    ] = None,
     database: Annotated[
         Database | None,
-        typer.Option("--database", help=CLI_HELP["database"]),
+        typer.Option("--database", help=CLI_HELP["database"], rich_help_panel="Services"),
     ] = None,
     default_storage: Annotated[
         Storage | None,
-        typer.Option("--default-storage", help=CLI_HELP["default_storage"]),
+        typer.Option(
+            "--default-storage", help=CLI_HELP["default_storage"], rich_help_panel="Services"
+        ),
     ] = None,
     default_database: Annotated[
         Database | None,
-        typer.Option("--default-database", help=CLI_HELP["default_database"]),
+        typer.Option(
+            "--default-database", help=CLI_HELP["default_database"], rich_help_panel="Services"
+        ),
     ] = None,
-    git: Annotated[bool | None, typer.Option("--git/--no-git", help=CLI_HELP["git"])] = None,
+    git: Annotated[
+        bool | None,
+        typer.Option("--git/--no-git", help=CLI_HELP["git"], rich_help_panel="Project setup"),
+    ] = None,
     migrate: Annotated[
         bool | None,
-        typer.Option("--migrate/--no-migrate", help=CLI_HELP["migrate"]),
+        typer.Option(
+            "--migrate/--no-migrate", help=CLI_HELP["migrate"], rich_help_panel="Project setup"
+        ),
     ] = None,
     open_editor: Annotated[
         bool | None,
-        typer.Option("--open/--no-open", help=CLI_HELP["open"]),
+        typer.Option("--open/--no-open", help=CLI_HELP["open"], rich_help_panel="Project setup"),
     ] = None,
     no_interaction: Annotated[
         bool,
         typer.Option(
             "--no-interaction",
             help=CLI_HELP["no_interaction"],
+            rich_help_panel="Terminal",
         ),
     ] = False,
-    no_color: Annotated[bool, typer.Option("--no-color", help=CLI_HELP["no_color"])] = False,
-    verbose: Annotated[bool, typer.Option("--verbose", help=CLI_HELP["verbose"])] = False,
+    no_color: Annotated[
+        bool, typer.Option("--no-color", help=CLI_HELP["no_color"], rich_help_panel="Terminal")
+    ] = False,
+    verbose: Annotated[
+        bool, typer.Option("--verbose", help=CLI_HELP["verbose"], rich_help_panel="Terminal")
+    ] = False,
 ) -> None:
     """Create and verify an application from explicit options or wizard input.
 
@@ -147,6 +187,8 @@ def new(
         Context containing global terminal preferences.
     name : str or None, optional
         Application name; prompt interactively or use the default when omitted.
+    stack : Stack or None, optional
+        Catalog stack selecting the skeleton repository and branch; defaults to Blank.
     path : Path or None, optional
         Final destination, defaulting to the named folder in the current directory.
     description : str or None, optional
@@ -191,6 +233,18 @@ def new(
         prerequisites = check_prerequisites(runner, cwd=Path.cwd(), announce=ui.message)
         ui.banner()
         if not no_interaction:
+            ui.section(MESSAGES["section_application"], MESSAGES["section_application_hint"])
+            if stack is None:
+                stack = Stack(
+                    ui.select(
+                        MESSAGES["stack"],
+                        STACK_CHOICES,
+                        DEFAULT_STACK.value,
+                        descriptions={
+                            key.value: source.description for key, source in STACKS.items()
+                        },
+                    )
+                )
             if name is None:
                 name = ui.text(MESSAGES["name"], "orionis-app", validate_name)
             if description is None:
@@ -209,6 +263,7 @@ def new(
                     MESSAGES["author_email"],
                     validator=_validate_optional_email,
                 )
+            ui.section(MESSAGES["section_services"], MESSAGES["section_services_hint"])
             if storage is None:
                 storage = Storage(
                     ui.select(MESSAGES["storage"], STORAGE_CHOICES, Storage.LOCAL.value)
@@ -236,6 +291,7 @@ def new(
             description=DEFAULT_DESCRIPTION if description is None else description,
             author_name=author_name or None,
             author_email=author_email or None,
+            stack=stack or DEFAULT_STACK,
             storage=storage or Storage.LOCAL,
             database=database or Database.SQLITE,
             default_storage=default_storage,
@@ -249,8 +305,11 @@ def new(
             ui.message(MESSAGES["not_confirmed"])
             raise typer.Exit(0)
         ui.message(MESSAGES["installing"])
-        result = Installer(plan, prerequisites, runner, on_step=ui.message).install()
+        with ui.progress() as progress:
+            result = Installer(plan, prerequisites, runner, on_step=progress.step).install()
         options = PostInstallOptions(git=git, migrate=migrate, open=open_editor)
+        if not no_interaction:
+            ui.section(MESSAGES["section_setup"], MESSAGES["section_setup_hint"])
         run_post_install(result, options, prerequisites, runner, ui, no_interaction=no_interaction)
         ui.final(result)
         raise typer.Exit(result.exit_code)

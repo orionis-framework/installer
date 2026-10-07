@@ -26,7 +26,7 @@ MESSAGES: dict[str, str] = {
     ),
     "app_key_missing": "Bootstrap did not generate APP_KEY; check framework compatibility.",
     "app_key_changed": "Bootstrap changed an existing APP_KEY; review the project.",
-    "phase_clone": "Cloning skeleton@master into staging...",
+    "phase_clone": "Cloning {stack} from {repository}@{branch} into staging...",
     "phase_configuration": "Skeleton validated. Configuring the application and extras...",
     "phase_sync": (
         "Project published. Synchronizing dependencies with uv at the final destination..."
@@ -107,6 +107,11 @@ MESSAGES: dict[str, str] = {
         "The staging directory contains a new redirection; publication stopped."
     ),
     "skeleton_revision_invalid": "Git did not return a valid provenance SHA.",
+    "source_branch_invalid": (
+        "The skeleton must check out the selected Git branch '{branch}'; "
+        "a tag or a different branch cannot provide its provenance."
+    ),
+    "skeleton_source_context": "{diagnostic} (stack source: {repository}@{branch})",
     "state_pending": "pending",
     "state_running": "running",
     "state_completed": "completed",
@@ -114,6 +119,11 @@ MESSAGES: dict[str, str] = {
     "state_failed": "failed",
     "state_cancelled": "cancelled",
     "plan_drivers_invalid": "The plan requires valid storage and database choices.",
+    "plan_stack_invalid": "Choose a configured application stack: blank or ssr.",
+    "skeleton_source_invalid": (
+        "Stack sources require clean metadata, a credential-free HTTPS repository, "
+        "and a valid explicit Git branch."
+    ),
     "description_label": "Description",
     "author_label": "Author",
     "default_driver_invalid": "The default driver must be a concrete choice.",
@@ -140,10 +150,9 @@ MESSAGES: dict[str, str] = {
     "seeders_tree_redirect": "The seeders contain links or junctions.",
     "seeders_unreadable": "The seeders could not be reviewed; this operation remains pending.",
     "seeders_unsafe": (
-        "The skeleton administrator seeder requires review: it contains static "
-        "credentials or lacks a verifiable secure contract. No migration or seeder was "
-        "executed. Review docs/seeder-hardening.patch and configure administrator inputs "
-        "independently of the author before running migrate --seed."
+        "The skeleton administrator seeder requires review: executable seeder code "
+        "cannot be certified automatically. Review its credentials and administrator "
+        "inputs before running migrate --seed."
     ),
     "connection_configuration_prompt": "Connection details are missing. Configure them now?",
     "connection_incomplete": "The connection is still incomplete; migration remains pending.",
@@ -156,9 +165,9 @@ MESSAGES: dict[str, str] = {
     "connection_invalid": "The connection is still invalid; migration remains pending.",
     "connection_display": "Connection: {connection}; database/service: {database}",
     "connection_display_host": "; host: {host}",
-    "migration_data_warning": ". Migrations and seeders will modify data.",
+    "migration_data_warning": ". Applying pending schema migrations.",
     "post_git_prompt": "Initialize Git in the project?",
-    "post_migration_prompt": "Run migrations and initial seeders?",
+    "post_migration_prompt": "Apply database migrations?",
     "post_editor_prompt": "Open the project in Visual Studio Code?",
     "editor_missing": (
         "Visual Studio Code was not found. Open the project folder manually using File > "
@@ -167,8 +176,8 @@ MESSAGES: dict[str, str] = {
     "post_cancelled": "Operation cancelled. Project preserved at {path}.",
     "post_files_failed": "A post-install file operation failed.",
     "migration_partial_warning": (
-        " Migrations or part of the seeding may have been applied. Review the project "
-        "state and run uv run python -B reactor migrate --seed again; no rollback or "
+        " Some migrations may have been applied. Review the project "
+        "state and run uv run python -B reactor migrate again; no rollback or "
         "migrate:fresh was performed."
     ),
     "connection_host_label": "Host",

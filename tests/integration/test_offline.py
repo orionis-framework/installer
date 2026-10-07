@@ -18,9 +18,17 @@ import tomlkit
 from packaging.requirements import Requirement
 
 from orionis_installer.configuration import read_env
-from orionis_installer.exceptions import Cancelled, InstallerError, ProcessError
+from orionis_installer.exceptions import Cancelled, CompatibilityError, InstallerError, ProcessError
 from orionis_installer.installer import CONFIG_PROBE, METADATA_PROBE, Installer
-from orionis_installer.models import SKELETON_URL, Database, InstallationPlan, State, Storage
+from orionis_installer.models import (
+    DEFAULT_STACK,
+    STACKS,
+    Database,
+    InstallationPlan,
+    Stack,
+    State,
+    Storage,
+)
 from orionis_installer.prerequisites import Prerequisites
 from orionis_installer.processes import Runner, isolated_environment, resolve_executable
 
@@ -66,7 +74,7 @@ def repository_factory(tmp_path, git):
         Factory returning a repository path and its committed revision.
     """
 
-    def create(branch="master"):
+    def create(branch=STACKS[DEFAULT_STACK].branch):
         """
         Create and commit an offline skeleton repository on the requested branch.
 
@@ -158,13 +166,13 @@ class LocalFixtureRunner(Runner):
         self.calls.append((arguments, Path(cwd)))
         if arguments[1] == "clone":
             self.clone_calls.append(arguments.copy())
-            assert arguments.count(SKELETON_URL) == 1
-            assert arguments[arguments.index("--branch") + 1] == "master"
+            assert arguments.count(self.plan.source.repository) == 1
+            assert arguments[arguments.index("--branch") + 1] == self.plan.source.branch
             assert "--no-recurse-submodules" in arguments
             assert not (Path(arguments[-1]) / ".venv").exists()
             if self.cancel == "clone":
                 raise Cancelled("offline fixture cancellation")
-            arguments[arguments.index(SKELETON_URL)] = str(self.repository)
+            arguments[arguments.index(self.plan.source.repository)] = str(self.repository)
             return super().run(arguments, cwd=cwd, timeout=timeout, env=env, check=check)
         if arguments[1] == "sync":
             assert Path(cwd) == self.plan.path
@@ -260,8 +268,9 @@ def prerequisites(git):
 @pytest.mark.parametrize(
     "storage,database", [(Storage.LOCAL, Database.SQLITE), (Storage.S3, Database.REDSHIFT)]
 )
+@pytest.mark.parametrize("stack", list(Stack))
 def test_offline_local_git_download_and_configured_final_environment(
-    tmp_path, git, repository_factory, storage, database
+    tmp_path, git, repository_factory, storage, database, stack
 ):
     """
     Verify local cloning, extras and environment creation at the final location.
@@ -278,11 +287,17 @@ def test_offline_local_git_download_and_configured_final_environment(
         Storage choice to configure.
     database : Database
         Database choice to configure.
+    stack : Stack
+        Stack whose branch is committed and selected for installation.
     """
-    repository, revision = repository_factory()
     plan = InstallationPlan(
-        "offline-app", tmp_path / "application with spaces ñ &", storage=storage, database=database
+        "offline-app",
+        tmp_path / "application with spaces ñ &",
+        storage=storage,
+        database=database,
+        stack=stack,
     )
+    repository, revision = repository_factory(plan.source.branch)
     runner = LocalFixtureRunner(repository, plan)
     result = Installer(plan, prerequisites(git), runner).install()
     assert result.creation == State.COMPLETED
@@ -293,7 +308,9 @@ def test_offline_local_git_download_and_configured_final_environment(
     assert not (plan.path / ".git").exists()
     assert (plan.path / ".gitignore").exists()
     provenance = json.loads((plan.path / ".orionis-install.json").read_text())
-    assert provenance["sha"] == revision and provenance["branch"] == "master"
+    assert provenance["sha"] == revision and provenance["branch"] == plan.source.branch
+    assert provenance["stack"] == stack.value
+    assert provenance["skeleton"] == plan.source.repository
     document = tomlkit.parse((plan.path / "pyproject.toml").read_text())
     framework = Requirement(document["project"]["dependencies"][0])
     assert framework.extras == set(plan.extras)
@@ -302,9 +319,60 @@ def test_offline_local_git_download_and_configured_final_environment(
     assert not list(tmp_path.glob(".*orionis*"))
 
 
-def test_missing_master_branch_never_falls_back_or_publishes(tmp_path, git, repository_factory):
+@pytest.mark.parametrize("stack", list(Stack))
+def test_real_clone_selects_requested_branch_when_stack_commits_differ(
+    tmp_path, git, repository_factory, stack
+):
+    """Clone the requested stack even when repository HEAD points at another branch.
+
+    Parameters
+    ----------
+    tmp_path : Path
+        Parent directory containing the source repository and final application.
+    git : Path
+        Trusted executable used for real branch creation and cloning.
+    repository_factory : Callable
+        Factory providing a committed Blank skeleton fixture.
+    stack : Stack
+        Branch to clone from the repository containing both supported stacks.
     """
-    Reject a fixture without master before publishing any destination.
+    repository, blank_revision = repository_factory()
+    source_runner = Runner()
+    source_runner.run([git, "checkout", "-b", STACKS[Stack.SSR].branch], cwd=repository)
+    (repository / "ssr-template.txt").write_text("Distinct SSR branch fixture", encoding="utf-8")
+    source_runner.run([git, "add", "ssr-template.txt"], cwd=repository)
+    source_runner.run(
+        [
+            git,
+            "-c",
+            "user.name=Offline Test Fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "commit",
+            "-m",
+            "Create distinct SSR stack fixture",
+        ],
+        cwd=repository,
+    )
+    ssr_revision = source_runner.run([git, "rev-parse", "HEAD"], cwd=repository).stdout.strip()
+    source_runner.run([git, "checkout", STACKS[Stack.BLANK].branch], cwd=repository)
+    plan = InstallationPlan("app", tmp_path / "application", stack=stack)
+    result = Installer(plan, prerequisites(git), LocalFixtureRunner(repository, plan)).install()
+    assert result.creation == State.COMPLETED
+    assert blank_revision != ssr_revision
+    assert (plan.path / "ssr-template.txt").exists() == (stack == Stack.SSR)
+    provenance = json.loads((plan.path / ".orionis-install.json").read_text())
+    expected_revision = ssr_revision if stack == Stack.SSR else blank_revision
+    assert provenance["sha"] == expected_revision
+    assert provenance["branch"] == plan.source.branch
+
+
+@pytest.mark.parametrize("stack", list(Stack))
+def test_missing_stack_branch_never_falls_back_or_publishes(
+    tmp_path, git, repository_factory, stack
+):
+    """
+    Reject a fixture without the selected stack branch before publication.
 
     Parameters
     ----------
@@ -314,14 +382,45 @@ def test_missing_master_branch_never_falls_back_or_publishes(tmp_path, git, repo
         Trusted Git executable.
     repository_factory : Callable
         Factory used to create a repository with only main.
+    stack : Stack
+        Missing stack branch that must not fall back to main.
     """
     repository, _revision = repository_factory("main")
-    plan = InstallationPlan("app", tmp_path / "app")
+    plan = InstallationPlan("app", tmp_path / "app", stack=stack)
     runner = LocalFixtureRunner(repository, plan)
     with pytest.raises(ProcessError):
         Installer(plan, prerequisites(git), runner).install()
     assert len(runner.clone_calls) == 1
     assert not plan.path.exists() and not list(tmp_path.glob(".*orionis*"))
+
+
+@pytest.mark.parametrize("stack", list(Stack))
+def test_tag_named_after_stack_branch_cannot_be_published(tmp_path, git, repository_factory, stack):
+    """Reject a real tag-only clone that Git accepts for the requested branch name.
+
+    Parameters
+    ----------
+    tmp_path : Path
+        Parent directory containing the source repository and rejected destination.
+    git : Path
+        Trusted executable used to create the conflicting tag and perform cloning.
+    repository_factory : Callable
+        Factory providing a skeleton repository whose only branch is main.
+    stack : Stack
+        Stack branch name used as a tag while the actual branch is absent.
+    """
+    repository, _revision = repository_factory("main")
+    source = STACKS[stack]
+    Runner().run([git, "tag", source.branch], cwd=repository)
+    plan = InstallationPlan("app", tmp_path / "app", stack=stack)
+    runner = LocalFixtureRunner(repository, plan)
+    with pytest.raises(CompatibilityError, match="selected Git branch") as caught:
+        Installer(plan, prerequisites(git), runner).install()
+    assert source.branch in str(caught.value)
+    assert source.repository in str(caught.value)
+    assert len(runner.clone_calls) == 1
+    assert not plan.path.exists()
+    assert not list(tmp_path.glob(".*orionis*"))
 
 
 def test_real_git_clone_failure_preserves_unrelated_files(tmp_path, git):

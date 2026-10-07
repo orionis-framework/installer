@@ -1,5 +1,6 @@
 """Test command contracts with controlled installation and terminal fixtures."""
 
+from contextlib import contextmanager
 from types import SimpleNamespace
 
 import pytest
@@ -13,8 +14,11 @@ from orionis_installer.exceptions import (
 )
 from orionis_installer.models import (
     DEFAULT_DESCRIPTION,
+    DEFAULT_STACK,
+    STACKS,
     Database,
     InstallationResult,
+    Stack,
     State,
     Storage,
 )
@@ -66,6 +70,33 @@ def harness(monkeypatch, tmp_path):
             """Record banner rendering after prerequisite verification."""
             events.append("banner")
 
+        def section(self, label, detail=""):
+            """Record a grouped wizard heading.
+
+            Parameters
+            ----------
+            label : str
+                Heading for the current group of questions.
+            detail : str, optional
+                Supporting instruction displayed below the heading.
+            """
+            events.append(("section", label, detail))
+
+        @contextmanager
+        def progress(self):
+            """Record progress boundaries and supply the phase callback.
+
+            Yields
+            ------
+            SimpleNamespace
+                Recorder receiving installation phase updates.
+            """
+            events.append("progress_start")
+            try:
+                yield SimpleNamespace(step=self.message)
+            finally:
+                events.append("progress_end")
+
         def text(self, label, default="", validator=None, password=False):
             """Record a text question and return its initial value.
 
@@ -88,7 +119,7 @@ def harness(monkeypatch, tmp_path):
             events.append(("text", label))
             return default
 
-        def select(self, label, choices, default):
+        def select(self, label, choices, default, *, descriptions=None):
             """Record a selector question and return its default machine value.
 
             Parameters
@@ -99,6 +130,8 @@ def harness(monkeypatch, tmp_path):
                 Machine values and captions supplied by the command.
             default : str or bool
                 Initial text, machine value, or consent returned by the fake prompt.
+            descriptions : dict[str, str] or None, optional
+                Supporting copy for each stack selection.
 
             Returns
             -------
@@ -312,6 +345,7 @@ def test_no_interaction_has_safe_defaults_and_zero_prompts(harness, tmp_path):
     assert harness.plan.description == DEFAULT_DESCRIPTION
     assert harness.plan.author_name is None and harness.plan.author_email is None
     assert harness.plan.storage == Storage.LOCAL and harness.plan.database == Database.SQLITE
+    assert harness.plan.stack == DEFAULT_STACK
     assert harness.plan.extras == ("factories",)
     assert harness.options.git is harness.options.migrate is harness.options.open is None
     assert harness.no_interaction is True
@@ -336,6 +370,8 @@ def test_explicit_interactive_fields_skip_their_prompts(harness):
         [
             "new",
             "blog",
+            "--stack",
+            "blank",
             "--description",
             "My application",
             "--author-name",
@@ -378,6 +414,7 @@ def test_interactive_questions_have_the_specified_order(harness):
     assert prompts == [
         MESSAGES[key]
         for key in (
+            "stack",
             "name",
             "description",
             "author_name",
@@ -388,6 +425,41 @@ def test_interactive_questions_have_the_specified_order(harness):
         )
     ]
     assert harness.events.index("prerequisites") < harness.events.index("banner")
+
+
+@pytest.mark.parametrize("stack", ["blank", "ssr", "Blank", "SSR"])
+def test_explicit_stack_selects_catalog_source_without_stack_prompt(harness, stack):
+    """Resolve explicit stacks to the configured repository and exact branch.
+
+    Parameters
+    ----------
+    harness : SimpleNamespace
+        Recorder capturing the CLI's resolved plan and interaction.
+    stack : str
+        Lowercase or display-case stack supplied to the public command.
+    """
+    result = CLI_RUNNER.invoke(cli.app, ["new", "--stack", stack, "--no-interaction"])
+    assert result.exit_code == 0, result.exception
+    selection = Stack(stack.lower())
+    assert harness.plan.stack == selection
+    assert harness.plan.source == STACKS[selection]
+    assert harness.plan.source.branch == f"{selection.value}_1.x"
+    assert ("select", MESSAGES["stack"]) not in harness.events
+    assert harness.events.index("progress_start") < harness.events.index("install")
+    assert harness.events.index("install") < harness.events.index("progress_end")
+
+
+def test_unknown_stack_is_rejected_before_installation(harness):
+    """Reject an unconfigured stack before any prerequisite or project mutation.
+
+    Parameters
+    ----------
+    harness : SimpleNamespace
+        Recorder detecting installation and prerequisite attempts.
+    """
+    result = CLI_RUNNER.invoke(cli.app, ["new", "--stack", "unknown", "--no-interaction"])
+    assert result.exit_code == 2
+    assert "prerequisites" not in harness.events and "install" not in harness.events
 
 
 def test_all_non_interactive_uses_concrete_defaults(harness):

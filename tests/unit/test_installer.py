@@ -24,7 +24,7 @@ from orionis_installer.installer import (
     verify_metadata,
 )
 from orionis_installer.messages import MESSAGES
-from orionis_installer.models import Database, InstallationPlan, State, Storage
+from orionis_installer.models import Database, InstallationPlan, Stack, State, Storage
 from orionis_installer.prerequisites import Prerequisites
 
 FIXTURE = Path(__file__).parents[1] / "fixtures" / "skeleton"
@@ -202,7 +202,7 @@ def clone_fixture(monkeypatch):
         Scoped replacement fixture for controlled dependencies.
     """
 
-    def clone(staging, git, runner):
+    def clone(staging, git, runner, *, source):
         """Copy the offline skeleton into exclusively owned staging.
 
         Parameters
@@ -213,6 +213,8 @@ def clone_fixture(monkeypatch):
             Trusted Git executable supplied to the clone fixture.
         runner : object
             Process fixture supplied to the clone seam.
+        source : SkeletonSource
+            Selected stack metadata passed by the installation coordinator.
 
         Returns
         -------
@@ -221,6 +223,7 @@ def clone_fixture(monkeypatch):
         """
         shutil.copytree(FIXTURE, staging, dirs_exist_ok=True)
         assert not (staging / ".venv").exists()
+        assert source == runner.plan.source
         return "a" * 40
 
     monkeypatch.setattr(installer, "clone_skeleton", clone)
@@ -236,8 +239,9 @@ def clone_fixture(monkeypatch):
         (Storage.ALL, Database.ALL),
     ],
 )
+@pytest.mark.parametrize("stack", list(Stack))
 def test_install_configures_extras_before_single_sync_at_final_location(
-    tmp_path, tools, clone_fixture, storage, database
+    tmp_path, tools, clone_fixture, storage, database, stack
 ):
     """Verify that extras are configured before one sync in the final directory.
 
@@ -253,12 +257,15 @@ def test_install_configures_extras_before_single_sync_at_final_location(
         Storage driver selection for the parameterized application.
     database : Database
         Database driver selection for the parameterized application.
+    stack : Stack
+        Source stack selected for the application.
     """
     plan = InstallationPlan(
         "test-app",
         tmp_path / "destination with spaces \u00f1 &",
         storage=storage,
         database=database,
+        stack=stack,
     )
     runner = FixtureInstallerRunner(plan)
     steps = []
@@ -274,7 +281,9 @@ def test_install_configures_extras_before_single_sync_at_final_location(
     assert (plan.path / ".env.example").read_bytes() == (FIXTURE / ".env.example").read_bytes()
     assert read_env(plan.path / ".env")["APP_KEY"] == "fixture-generated-key"
     provenance = json.loads((plan.path / ".orionis-install.json").read_text())
-    assert provenance["branch"] == "master" and provenance["sha"] == "a" * 40
+    assert provenance["stack"] == stack.value
+    assert provenance["skeleton"] == plan.source.repository
+    assert provenance["branch"] == plan.source.branch and provenance["sha"] == "a" * 40
     assert provenance["extras"] == list(plan.extras)
     assert not any("fixture-generated-key" in step for step in steps)
 
@@ -326,7 +335,7 @@ def test_clone_failure_never_publishes_and_cleans_only_owned_staging(tmp_path, t
     unrelated = tmp_path / "my-notes.txt"
     unrelated.write_text("keep")
 
-    def clone(staging, git, runner):
+    def clone(staging, git, runner, *, source):
         """Create a partial clone and fail before publication.
 
         Parameters
@@ -337,6 +346,8 @@ def test_clone_failure_never_publishes_and_cleans_only_owned_staging(tmp_path, t
             Trusted Git executable supplied to the clone fixture.
         runner : object
             Process fixture supplied to the clone seam.
+        source : SkeletonSource
+            Selected stack metadata passed by the installation coordinator.
 
         Raises
         ------
@@ -352,6 +363,61 @@ def test_clone_failure_never_publishes_and_cleans_only_owned_staging(tmp_path, t
     assert not plan.path.exists()
     assert unrelated.read_text() == "keep"
     assert not list(tmp_path.glob(".*orionis*"))
+
+
+@pytest.mark.parametrize("stack", list(Stack))
+@pytest.mark.parametrize("published", [False, True])
+def test_compatibility_failure_identifies_selected_repository_and_branch(
+    tmp_path, tools, clone_fixture, monkeypatch, stack, published
+):
+    """Include selected source context before and after application publication.
+
+    Parameters
+    ----------
+    tmp_path : Path
+        Disposable directory containing the application destination.
+    tools : Prerequisites
+        Executable paths used only by the controlled installation fixture.
+    clone_fixture : None
+        Fixture copying the explicitly identified offline skeleton.
+    monkeypatch : pytest.MonkeyPatch
+        Scoped replacement of the manifest configuration operation.
+    stack : Stack
+        Source repository and branch that must appear in the diagnostic.
+    published : bool
+        Whether to fail runtime verification after the final directory exists.
+    """
+    plan = InstallationPlan("app", tmp_path / "app", stack=stack)
+    runner = FixtureInstallerRunner(plan)
+    if published:
+        runner.data["version"] = "0.0.0"
+    else:
+
+        def incompatible_manifest(*args, **kwargs):
+            """Reject the controlled manifest before any application is published.
+
+            Parameters
+            ----------
+            *args : tuple
+                Configuration arguments unused by the rejection fixture.
+            **kwargs : dict
+                Configuration options unused by the rejection fixture.
+
+            Raises
+            ------
+            CompatibilityError
+                Always report the injected template incompatibility.
+            """
+            raise CompatibilityError("Injected incompatible template")
+
+        monkeypatch.setattr(installer, "configure_pyproject", incompatible_manifest)
+    with pytest.raises(CompatibilityError) as caught:
+        Installer(plan, tools, runner).install()
+    diagnostic = str(caught.value)
+    assert plan.source.repository in diagnostic
+    assert plan.source.branch in diagnostic
+    assert ("uv sync --python 3.14" in diagnostic) == published
+    assert plan.path.exists() == published
 
 
 @pytest.mark.parametrize("phase", ["sync", "metadata", "configuration", "key"])
@@ -393,7 +459,7 @@ def test_cancellation_before_publication_cleans_only_staging(tmp_path, tools, mo
     """
     plan = InstallationPlan("app", tmp_path / "app")
 
-    def clone(staging, git, runner):
+    def clone(staging, git, runner, *, source):
         """Cancel cloning before any application files are published.
 
         Parameters
@@ -404,6 +470,8 @@ def test_cancellation_before_publication_cleans_only_staging(tmp_path, tools, mo
             Trusted Git executable supplied to the clone fixture.
         runner : object
             Process fixture supplied to the clone seam.
+        source : SkeletonSource
+            Selected stack metadata passed by the installation coordinator.
 
         Raises
         ------

@@ -11,6 +11,7 @@ import tomlkit
 from dotenv import dotenv_values
 from packaging.requirements import Requirement
 
+from orionis_installer import __version__
 from orionis_installer.configuration import (
     config_contract,
     configure_environment,
@@ -24,7 +25,7 @@ from orionis_installer.configuration import (
     write_provenance,
 )
 from orionis_installer.exceptions import CompatibilityError
-from orionis_installer.models import Database, InstallationPlan, Storage
+from orionis_installer.models import Database, InstallationPlan, Stack, Storage
 
 FIXTURE = Path(__file__).parents[1] / "fixtures" / "skeleton"
 
@@ -424,6 +425,11 @@ def test_existing_key_and_sqlite_database_are_preserved(template):
         "C:relative.sqlite",
         r"..\foreign.sqlite",
         r"\outside.sqlite",
+        ":memory:",
+        "file::memory:?cache=shared",
+        "file:database/database.sqlite?mode=memory",
+        "sqlite:///:memory:",
+        "sqlite+aiosqlite:///:memory:",
     ],
 )
 def test_sqlite_paths_are_local_and_have_a_template_directory(template, database_path):
@@ -442,6 +448,35 @@ def test_sqlite_paths_are_local_and_have_a_template_directory(template, database
     set_key(path, "DB_DATABASE", database_path, quote_mode="always")
     with pytest.raises(CompatibilityError):
         configure_environment(template, plan(template))
+
+
+@pytest.mark.parametrize("database_path", [":memory:", "file::memory:?cache=shared"])
+@pytest.mark.parametrize("encoding", ["raw", "str", "base64"])
+def test_typed_sqlite_memory_paths_are_rejected_before_publication(
+    template, database_path, encoding
+):
+    """Reject memory-backed SQLite even when the environment stores a typed literal.
+
+    Parameters
+    ----------
+    template : Path
+        Disposable copy of the explicitly synthetic skeleton fixture.
+    database_path : str
+        In-memory SQLite marker or URI that cannot retain installed schema.
+    encoding : str
+        Raw, string-prefixed, or base64 encoding used by the environment value.
+    """
+    path = template / ".env.example"
+    if encoding == "base64":
+        set_literal_env(path, "DB_DATABASE", database_path)
+    else:
+        from dotenv import set_key
+
+        value = f"str:{database_path}" if encoding == "str" else database_path
+        set_key(path, "DB_DATABASE", value, quote_mode="always")
+    with pytest.raises(CompatibilityError, match="SQLite requires a relative local path"):
+        configure_environment(template, plan(template))
+    assert not (plan(template).path).exists()
 
 
 @pytest.mark.parametrize(
@@ -577,21 +612,27 @@ def test_missing_verified_environment_key_fails(template):
         configure_environment(template, plan(template))
 
 
-def test_provenance_has_no_authors_or_environment_secrets_and_lock_is_trackable(template):
+@pytest.mark.parametrize("stack", list(Stack))
+def test_provenance_has_no_authors_or_environment_secrets_and_lock_is_trackable(template, stack):
     """Verify that provenance excludes secrets and uv.lock remains trackable.
 
     Parameters
     ----------
     template : Path
         Disposable copy of the explicitly synthetic skeleton fixture.
+    stack : Stack
+        Source stack recorded alongside its exact repository and branch.
     """
     ensure_gitignore(template)
-    choices = plan(template, author_email="private@example.test")
+    choices = plan(template, author_email="private@example.test", stack=stack)
     write_provenance(template, "a" * 40, choices)
     text = (template / ".orionis-install.json").read_text(encoding="utf-8")
     data = json.loads(text)
     assert data["sha"] == "a" * 40
-    assert data["branch"] == "master"
+    assert data["installer"] == __version__
+    assert data["stack"] == stack.value
+    assert data["skeleton"] == choices.source.repository
+    assert data["branch"] == choices.source.branch
     assert data["extras"] == ["factories"]
     assert "private@example.test" not in text
     assert "APP_KEY" not in text and "DB_PASSWORD" not in text

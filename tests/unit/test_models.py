@@ -1,5 +1,6 @@
 """Installation choices are pure and do not require a terminal or Orionis."""
 
+from dataclasses import FrozenInstanceError
 from itertools import product
 from pathlib import Path
 
@@ -7,13 +8,123 @@ import pytest
 
 from orionis_installer.exceptions import ValidationError
 from orionis_installer.models import (
+    DEFAULT_STACK,
+    STACKS,
     Database,
     InstallationPlan,
     InstallationResult,
     PostInstallOptions,
+    SkeletonSource,
+    Stack,
     State,
     Storage,
 )
+
+
+def test_stack_catalog_covers_every_selection_and_metadata_is_immutable():
+    """Verify that the source dictionary completely describes each selectable stack."""
+    assert set(STACKS) == set(Stack)
+    assert DEFAULT_STACK == Stack.BLANK
+    assert STACKS[Stack.BLANK].branch == "blank_1.x"
+    assert STACKS[Stack.SSR].branch == "ssr_1.x"
+    assert STACKS[Stack.BLANK].label == "Blank"
+    assert STACKS[Stack.SSR].label == "SSR"
+    for source in STACKS.values():
+        assert source.repository == "https://github.com/orionis-framework/skeleton"
+        assert source.description.strip()
+        with pytest.raises(FrozenInstanceError):
+            source.branch = "unexpected"
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("repository", ""),
+        ("repository", "http://example.test/skeleton"),
+        ("repository", "https://user:secret@example.test/skeleton"),
+        ("repository", "https://example.test/skeleton?token=secret"),
+        ("repository", "https://example.test/skeleton#main"),
+        ("repository", "https:///skeleton"),
+        ("repository", "https://example.test:invalid/skeleton"),
+        ("repository", "https://example.test/with space"),
+        ("repository", "https://example.test/with\\backslash"),
+        ("branch", ""),
+        ("branch", "--upload-pack=unexpected"),
+        ("branch", "../main"),
+        ("branch", "feature/.hidden"),
+        ("branch", "feature.lock"),
+        ("branch", "feature//main"),
+        ("branch", "feature@{previous}"),
+        ("branch", "feature:main"),
+        ("branch", "feature/main."),
+        ("branch", "HEAD"),
+        ("label", ""),
+        ("label", "\x1b[31mBlank"),
+        ("description", "Trailing whitespace "),
+    ],
+)
+def test_source_catalog_mistakes_are_rejected(field, value):
+    """Reject malformed catalog entries and credential-bearing repository URLs.
+
+    Parameters
+    ----------
+    field : str
+        Source metadata field receiving an invalid value.
+    value : str
+        Empty, unsafe, or malformed metadata to reject before installation.
+    """
+    metadata = {
+        "repository": "https://example.test/skeleton.git",
+        "branch": "release/blank_1.x",
+        "label": "Blank",
+        "description": "Minimal application foundation",
+    }
+    metadata[field] = value
+    with pytest.raises(ValidationError, match="Stack sources"):
+        SkeletonSource(**metadata)
+
+
+def test_source_catalog_accepts_https_repository_and_explicit_nested_branch():
+    """Accept clean catalog metadata including valid nested Git branch names."""
+    source = SkeletonSource(
+        "https://example.test/team/skeleton.git",
+        "release/blank_1.x",
+        "Blank",
+        "Minimal application",
+    )
+    assert source.branch == "release/blank_1.x"
+
+
+@pytest.mark.parametrize("stack", list(Stack))
+def test_plan_resolves_selected_stack_source(stack, tmp_path):
+    """Verify that source resolution follows the selected catalog entry.
+
+    Parameters
+    ----------
+    stack : Stack
+        Stack whose source should be resolved by the application plan.
+    tmp_path : Path
+        Temporary directory isolating the application destination.
+    """
+    plan = InstallationPlan("app", tmp_path / "app", stack=stack)
+    assert plan.stack == stack
+    assert plan.source is STACKS[stack]
+    assert InstallationPlan("default-app", tmp_path / "default-app").source is STACKS[DEFAULT_STACK]
+
+
+@pytest.mark.parametrize("stack", ["blank", "ssr", "unknown", None])
+def test_plan_rejects_unvalidated_stack_values(stack, tmp_path):
+    """Require a validated stack enumeration before installation begins.
+
+    Parameters
+    ----------
+    stack : object
+        Raw or unsupported stack value passed outside the command-line parser.
+    tmp_path : Path
+        Temporary directory isolating the application destination.
+    """
+    with pytest.raises(ValidationError, match="stack"):
+        InstallationPlan("app", tmp_path / "app", stack=stack)
 
 
 @pytest.mark.parametrize(("storage", "database"), list(product(Storage, Database)))

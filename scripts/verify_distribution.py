@@ -6,12 +6,15 @@ runs the skeleton's privileged example seeder or connects to external databases.
 
 import json
 import os
+import sqlite3
 import tempfile
+from contextlib import closing
 from pathlib import Path
 
 from orionis_installer import __version__
-from orionis_installer.configuration import read_env
+from orionis_installer.configuration import literal_value, read_env
 from orionis_installer.installer import project_python
+from orionis_installer.models import STACKS, Stack
 from orionis_installer.prerequisites import check_prerequisites
 from orionis_installer.processes import Runner, resolve_executable
 
@@ -23,7 +26,7 @@ def main() -> None:
     Returns
     -------
     None
-        Check the installed entry point, application runtime and seeder guard.
+        Check the installed entry point, application runtime, and schema migrations.
 
     Raises
     ------
@@ -85,6 +88,8 @@ def main() -> None:
                 "orionis",
                 "new",
                 "wheel-smoke",
+                "--stack",
+                Stack.SSR.value,
                 "--path",
                 project,
                 "--no-interaction",
@@ -97,13 +102,27 @@ def main() -> None:
             timeout=900,
             check=False,
         )
-        assert response.returncode == 3, (
-            "Requested unsafe example seeding must fail only post-install."
-        )
-        assert "administrator seeder" in response.stdout
+        assert response.returncode == 0, "Requested schema migrations must complete successfully."
         assert (project / ".git").is_dir() and (project / "uv.lock").is_file()
-        assert read_env(project / ".env")["APP_KEY"]
-        assert not (project / "database" / "database.sqlite").exists()
+        application_environment = read_env(project / ".env")
+        assert application_environment["APP_KEY"]
+        provenance = json.loads((project / ".orionis-install.json").read_text(encoding="utf-8"))
+        assert provenance["stack"] == Stack.SSR.value
+        assert provenance["skeleton"] == STACKS[Stack.SSR].repository
+        assert provenance["branch"] == STACKS[Stack.SSR].branch
+        database = project / Path(literal_value(application_environment["DB_DATABASE"]))
+        assert database.is_relative_to(project) and database.is_file()
+        with closing(sqlite3.connect(database)) as connection:
+            tables = {
+                name
+                for (name,) in connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'"
+                )
+            }
+            applied = connection.execute("SELECT COUNT(*) FROM migrations").fetchone()[0]
+            users = connection.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+        assert {"migrations", "users", "scheduler_tasks", "cache"} <= tables
+        assert applied > 0 and users == 0
         child = runner.run(
             [
                 project_python(project),
@@ -123,7 +142,8 @@ def main() -> None:
         assert ".env" in ignored and ".venv/" in ignored and "uv.lock" not in ignored
         print(
             f"Real uvx wheel: Python {runtime['python']}, Orionis {runtime['orionis']}; "
-            "factories, final venv, Git init, secret ignores and safe seeder refusal verified.",
+            "SSR branch, factories, final venv, Git init, secret ignores and schema migrations "
+            "without seeded users verified.",
             flush=True,
         )
 

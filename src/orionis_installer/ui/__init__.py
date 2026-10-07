@@ -2,7 +2,7 @@
 
 import os
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import TextIO
 
 from orionis_installer.exceptions import ValidationError
@@ -91,7 +91,14 @@ class UI(Output):
         self.require_tty()
         return self.prompts.text(label, default, validator, password)
 
-    def select(self, label: str, choices: list[tuple[str, str]], default: str) -> str:
+    def select(
+        self,
+        label: str,
+        choices: list[tuple[str, str]],
+        default: str,
+        *,
+        descriptions: Mapping[str, str] | None = None,
+    ) -> str:
         """Select and report a choice from an interactive terminal.
 
         Parameters
@@ -102,6 +109,8 @@ class UI(Output):
             Ordered machine values and visible captions.
         default : str
             Machine value initially selected.
+        descriptions : Mapping of str to str or None, optional
+            Contextual explanation displayed for the currently active option.
 
         Returns
         -------
@@ -120,8 +129,8 @@ class UI(Output):
             If the user closes input before accepting a choice.
         """
         self.require_tty()
-        value = self.prompts.select(label, choices, default)
-        self.message(terminal_choice(label, choices, value))
+        value = self.prompts.select(label, choices, default, descriptions=descriptions)
+        self.choice(label, dict(choices)[value])
         return value
 
     def confirm(self, label: str, default: bool) -> bool:
@@ -149,7 +158,9 @@ class UI(Output):
             If the user closes input before accepting a decision.
         """
         self.require_tty()
-        return self.prompts.confirm(label, default)
+        value = self.prompts.confirm(label, default)
+        self.choice(label, MESSAGES["yes" if value else "no"])
+        return value
 
 
 def terminal_choice(label: str, choices: list[tuple[str, str]], value: str) -> str:
