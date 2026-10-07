@@ -1,33 +1,13 @@
-# ========================
-# 💾 Python-related files
-# ========================
+.venv/
 __pycache__/
 *.py[cod]
-*$py.class
-
-# ========================
-# ⚙️ Virtual Environments & Dependencies
-# ========================
-venv/
-*.venv/
-
-# ========================
-# 📦 Build & Distribution
-# ========================
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage*
+htmlcov/
+coverage.xml
 build/
 dist/
 *.egg-info/
-publisher.py
-
-# ========================
-# 🛠 IDE & Editor Configs
-# ========================
-.vscode/
-.idea/
-*.iml
-
-# ========================
-# 📂 Miscellaneous
-# ========================
-.DS_Store
-Thumbs.db
+release.ps1

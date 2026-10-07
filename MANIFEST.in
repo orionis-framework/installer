@@ -1,3 +1,8 @@
-include README.md
-include LICENSE
-recursive-include orionis *.py
+include README.md LICENCE pyproject.toml uv.lock .python-version
+recursive-include src *.py py.typed
+recursive-include tests *.py *.toml *.md *.example .gitignore .gitkeep LICENCE reactor
+recursive-include docs *.md *.patch
+recursive-include scripts *.py
+recursive-include .github *.yml
+global-exclude *.py[cod]
+global-exclude __pycache__
