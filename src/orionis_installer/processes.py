@@ -573,7 +573,7 @@ class Runner:
         """
         return self._run(argv, cwd=cwd, timeout=timeout, env=env, check=check)
 
-    def open_editor(
+    def openEditor(
         self, launcher: Path, project: Path, *, cwd: Path, timeout: float = 30
     ) -> subprocess.CompletedProcess[str]:
         """

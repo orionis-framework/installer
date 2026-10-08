@@ -1,11 +1,12 @@
 import os
 import sys
 from collections.abc import Callable, Mapping
-from typing import TextIO
+from typing import TYPE_CHECKING, TextIO
 from orionis_installer.exceptions import ValidationError
 from orionis_installer.ui.messages import MESSAGES
 from orionis_installer.ui.output import Output
-from orionis_installer.ui.prompts import Prompts
+if TYPE_CHECKING:
+    from orionis_installer.ui.prompts import Prompts
 
 def has_tty() -> bool:
     """
@@ -38,9 +39,24 @@ class UI(Output):
         """
         self.no_color = no_color or "NO_COLOR" in os.environ
         super().__init__(no_color=self.no_color, file=file, width=width)
-        self.prompts = Prompts(no_color=self.no_color)
+        self._prompts: Prompts | None = None
 
-    def require_tty(self) -> None:
+    @property
+    def prompts(self) -> Prompts:
+        """Create the interactive prompt provider on first use.
+
+        Returns
+        -------
+        Prompts
+            Prompt provider shared by this interface's interactive operations.
+        """
+        if self._prompts is None:
+            from orionis_installer.ui.prompts import Prompts
+
+            self._prompts = Prompts(no_color=self.no_color)
+        return self._prompts
+
+    def requireTty(self) -> None:
         """
         Reject interactive input when either stream lacks a terminal.
 
@@ -87,7 +103,7 @@ class UI(Output):
         EOFError
             If input closes before a value is accepted.
         """
-        self.require_tty()
+        self.requireTty()
         return self.prompts.text(label, default, validator, password)
 
     def select(
@@ -127,7 +143,7 @@ class UI(Output):
         EOFError
             If the user closes input before accepting a choice.
         """
-        self.require_tty()
+        self.requireTty()
         value = self.prompts.select(label, choices, default, descriptions=descriptions)
         self.choice(label, dict(choices)[value])
         return value
@@ -156,7 +172,7 @@ class UI(Output):
         EOFError
             If the user closes input before accepting a decision.
         """
-        self.require_tty()
+        self.requireTty()
         value = self.prompts.confirm(label, default)
         self.choice(label, MESSAGES["yes" if value else "no"])
         return value

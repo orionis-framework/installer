@@ -419,7 +419,7 @@ def run_post_install( # NOSONAR
                 )
                 if launcher is None:
                     raise CompatibilityError(MESSAGES["editor_missing"])
-                runner.open_editor(launcher, result.plan.path, cwd=result.plan.path)
+                runner.openEditor(launcher, result.plan.path, cwd=result.plan.path)
             setattr(result, attribute, State.COMPLETED)
         except KeyboardInterrupt, Cancelled:
             setattr(result, attribute, State.CANCELLED)

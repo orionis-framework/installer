@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Python 3.14 / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    env:
+      PYTHONUTF8: "1"
+      ORIONIS_SKELETON_AUDIT: ${{ github.workspace }}/.ci-skeleton
+    steps:
+      - name: Checkout installer
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Checkout Blank skeleton
+        uses: actions/checkout@v6
+        with:
+          repository: orionis-framework/skeleton
+          ref: blank_1.x
+          path: .ci-skeleton/blank
+          persist-credentials: false
+
+      - name: Checkout SSR skeleton
+        uses: actions/checkout@v6
+        with:
+          repository: orionis-framework/skeleton
+          ref: ssr_1.x
+          path: .ci-skeleton/ssr
+          persist-credentials: false
+
+      - name: Set up uv and Python
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4
+        with:
+          python-version: "3.14"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install locked dependencies
+        run: uv sync --locked --python 3.14
+
+      - name: Check lint
+        run: uv run --no-sync ruff check . --extend-exclude .ci-skeleton
+
+      - name: Check types
+        run: uv run --no-sync mypy
+
+      - name: Run tests and skeleton matrix
+        run: uv run --no-sync pytest -m 'not smoke' --cov=orionis_installer --cov-report=term-missing
+
+      - name: Run real installation tests
+        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
+        env:
+          ORIONIS_REAL_SMOKE: "1"
+        run: uv run --no-sync pytest -m smoke -v
+
+      - name: Build distribution
+        run: uv build --no-sources

@@ -298,6 +298,7 @@ def valid_sqlite_path(database: str) -> bool:
     normalized = database.strip().lower()
     return (
         bool(normalized)
+        and bool(path.name)
         and normalized != ":memory:"
         and not normalized.startswith(("file:", "sqlite:", "sqlite+aiosqlite:"))
         and not path.anchor
@@ -306,6 +307,27 @@ def valid_sqlite_path(database: str) -> bool:
         and ".." not in path.parts
         and not any(ord(character) < 32 or ord(character) == 127 for character in database)
     )
+
+def _validate_sqlite_database(root: Path, database: str) -> None:
+    """Require a persistent SQLite file inside an existing application directory.
+
+    Parameters
+    ----------
+    root : Path
+        Application root containing the database directory.
+    database : str
+        Decoded relative SQLite filename.
+
+    Raises
+    ------
+    CompatibilityError
+        If the path is unsafe, names a directory, or has a missing parent.
+    """
+    if not valid_sqlite_path(database) or (root / database).is_dir():
+        raise CompatibilityError(MESSAGES["sqlite_path_invalid"])
+    if not (root / database).parent.is_dir():
+        raise CompatibilityError(MESSAGES["sqlite_directory_missing"])
+
 
 def configure_environment(root: Path, plan: InstallationPlan) -> None:
     """Create a local environment with verified drivers and pending credentials.
@@ -335,16 +357,10 @@ def configure_environment(root: Path, plan: InstallationPlan) -> None:
     set_key(path, "FILESYSTEM_DISK", plan.active_storage.value, quote_mode="always")
     set_key(path, "DB_CONNECTION", plan.active_database.value, quote_mode="always")
     if plan.active_database == Database.SQLITE:
-        database = literal_value(values["DB_DATABASE"])
-        db_path = Path(database)
-        if not valid_sqlite_path(database):
-            raise CompatibilityError(MESSAGES["sqlite_path_invalid"])
-        if not (root / db_path).parent.is_dir():
-            raise CompatibilityError(MESSAGES["sqlite_directory_missing"])
+        _validate_sqlite_database(root, literal_value(values["DB_DATABASE"]))
         # SQLite creates the file on first migration; never truncate one from the template.
     else:
-        if not {"DB_HOST", "DB_PORT", "DB_USERNAME"} <= values.keys():
-            raise CompatibilityError(MESSAGES["database_keys_missing"])
+        set_literal_env(path, "DB_HOST", literal_value(values.get("DB_HOST")) or "127.0.0.1")
         set_literal_env(path, "DB_DATABASE", plan.name)
         set_literal_env(path, "DB_USERNAME", "configure-me")
         set_key(path, "DB_PORT", str(PORTS[plan.active_database]), quote_mode="never")

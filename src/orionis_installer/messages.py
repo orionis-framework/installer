@@ -80,7 +80,6 @@ MESSAGES: dict[str, str] = {
     ),
     "sqlite_path_invalid": "SQLite requires a relative local path consistent with the skeleton.",
     "sqlite_directory_missing": "The SQLite directory declared by the skeleton does not exist.",
-    "database_keys_missing": "Verified external connection keys are missing.",
     "oracle_service_unsupported": "The skeleton cannot represent DB_SERVICE_NAME for Oracle.",
     "staging_redirect": "The staging directory contains a redirection.",
     "skeleton_redirect": "The skeleton contains links or junctions; clone rejected.",

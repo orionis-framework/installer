@@ -99,8 +99,6 @@ STACKS: dict[Stack, SkeletonSource] = {
     ),
 }
 DEFAULT_STACK = Stack.BLANK
-SKELETON_URL = STACKS[DEFAULT_STACK].repository
-SKELETON_BRANCH = STACKS[DEFAULT_STACK].branch
 
 class Storage(StrEnum):
     """Enumerate supported storage choices and the aggregate SDK selection."""
@@ -193,6 +191,13 @@ class InstallationPlan:
             validate_text(self.author_name, MESSAGES["author_label"])
         if self.author_email:
             validate_email(self.author_email)
+        if any(
+            default is not None and not isinstance(default, kind)
+            for default, kind in (
+                (self.default_storage, Storage), (self.default_database, Database),
+            )
+        ):
+            raise ValidationError(MESSAGES["default_driver_invalid"])
         if self.default_storage == Storage.ALL or self.default_database == Database.ALL:
             raise ValidationError(MESSAGES["default_driver_invalid"])
         if self.storage != Storage.ALL and self.default_storage not in (None, self.storage):

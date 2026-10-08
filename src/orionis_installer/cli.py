@@ -277,7 +277,7 @@ def _run_new(command: _NewCommand) -> None:
     ui = UI(no_color=command.no_color or settings.get("no_color", False))
     try:
         if not command.no_interaction:
-            ui.require_tty()
+            ui.requireTty()
         runner = Runner()
         prerequisites = check_prerequisites(runner, cwd=Path.cwd(), announce=ui.message)
         ui.banner()

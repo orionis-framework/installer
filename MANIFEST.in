@@ -1,4 +1,5 @@
 include README.md LICENCE pyproject.toml uv.lock .python-version
+exclude RELEASE.ps1
 recursive-include src *.py py.typed
 recursive-include tests *.py *.toml *.md *.example .gitignore .gitkeep LICENCE reactor
 recursive-include scripts *.py

@@ -4,13 +4,11 @@
 Python **3.14.x**, a project-local `.venv` and `uv.lock`. Its Python
 module is `orionis_installer` and its executable is **`orionis`**.
 
-The installer depends on CLI and configuration libraries. Orionis, database
-drivers, cloud SDKs and Faker belong to the generated application's environment.
-The English wizard groups application metadata and services into clear stages,
-with descriptive stack choices, arrow-key navigation, visible defaults and immediate
-validation. A constellation identity, responsive plan cards, a live installation
-timeline and a status-aware completion panel guide the whole experience. Narrow
-terminals and plain logs are supported; `NO_COLOR` and `--no-color` disable colors.
+Choose a stack, name your application, select storage and database drivers, then
+review the installation plan. The installer downloads the skeleton, configures
+the project and installs its dependencies in an independent environment.
+After installation, you can initialize Git, run migrations and open the project
+in Visual Studio Code. `NO_COLOR` and `--no-color` disable terminal colors.
 
 ## Installation
 
@@ -36,14 +34,6 @@ independent environment. The framework can also provide an `orionis` executable;
 invoke the installer through `uvx --from orionis-installer orionis ...` and use
 Reactor through the application's Python. Do not overwrite existing executables
 with force flags.
-
-For a local build:
-
-```bash
-uv build
-uvx --python 3.14 --from ./dist/orionis_installer-0.2.0-py3-none-any.whl orionis --version
-uvx --python 3.14 --from ./dist/orionis_installer-0.2.0-py3-none-any.whl orionis new blog
-```
 
 ## Interactive wizard
 
@@ -111,36 +101,15 @@ positive flags are provided. This mode never requests credentials.
 A default driver must be concrete. Without `all`, it can only repeat the selected
 driver. There is no destructive `--force` option.
 
-## Stack catalog
+## Stacks
 
-Edit the centralized `STACKS` dictionary in `src/orionis_installer/models.py` to
-set the project and branch for each stack. The wizard derives its choices and
-descriptions from this catalog; CLI selection, download and review all resolve
-the same entry.
+| Stack | Starting application | Skeleton branch |
+| --- | --- | --- |
+| `blank` | Minimal foundation for a new application; the default. | `blank_1.x` |
+| `ssr` | Starting point for server-side rendered applications. | `ssr_1.x` |
 
-```python
-STACKS = {
-    Stack.BLANK: SkeletonSource(
-        repository="https://github.com/orionis-framework/skeleton",
-        branch="blank_1.x",
-        label="Blank",
-        description="A minimal foundation for building your application from scratch.",
-    ),
-    Stack.SSR: SkeletonSource(
-        repository="https://github.com/orionis-framework/skeleton",
-        branch="ssr_1.x",
-        label="SSR",
-        description="A starting point for applications with server-side rendering.",
-    ),
-}
-```
-
-To add a stack, add its machine value to `Stack` and its source to `STACKS`.
-Sources use credential-free HTTPS repository URLs and explicit branch names.
-Only the selected branch is cloned; a missing branch fails without falling back.
-The installer does not create an `.orionis-install.json` metadata file in the
-application. Stack selection chooses a source: application features come from
-that branch.
+Both stacks use the official Orionis skeleton. Only the selected branch is
+downloaded; an unavailable branch stops installation without switching stacks.
 
 ## Drivers and configuration
 
@@ -239,72 +208,3 @@ After reviewing the connection and securing the seeders, populate initial data:
 uv run python -B reactor migrate --seed
 ```
 
-## Development
-
-```bash
-uv sync --locked --python 3.14
-uv run --no-sync ruff check .
-uv run --no-sync ruff format --check .
-uv run --no-sync mypy
-uv run --no-sync pytest --cov=orionis_installer --cov-report=term-missing
-uv build
-uv run --no-sync python scripts/verify_distribution.py
-```
-
-Normal tests use controlled terminal input, disposable processes and explicit
-fixtures. Offline integration uses a local Git repository with simulated uv and
-framework responses; it does not require Orionis or a network connection. The
-distribution verification script installs the wheel into a clean temporary
-environment and creates a disposable application through real uvx.
-
-Enable the real smoke test explicitly. It uses the official skeleton, uv and a
-disposable SQLite databases for both stacks, through the installer's migration
-path, without executing seeders:
-
-```bash
-ORIONIS_REAL_SMOKE=1 uv run --no-sync pytest -m smoke -v
-```
-
-```powershell
-$env:ORIONIS_REAL_SMOKE = '1'
-uv run --no-sync pytest -m smoke -v
-Remove-Item Env:ORIONIS_REAL_SMOKE
-```
-
-[CI](.github/workflows/ci.yml) checks Python 3.14 on Ubuntu, Windows and macOS,
-including lint, formatting, types, tests, build and the clean-wheel entry point.
-Runtime checks on an individual machine do not verify the other platforms or
-external cloud/database services. CI does not publish the package.
-
-Follow the English, typed documentation style of
-[Orionis commands](https://github.com/orionis-framework/framework/blob/1.x/orionis/console/commands/support/key_generate.py)
-and [configuration entities](https://github.com/orionis-framework/framework/blob/1.x/orionis/foundation/config/database/entities/connections.py).
-Use concise triple-double-quoted NumPy docstrings for every function and method,
-including private helpers and callbacks. Start with an imperative sentence;
-include relevant Parameters, Returns, Yields and Raises sections, without an
-Examples section. Ruff enforces the NumPy convention and D401; an AST-based test
-checks documentation coverage for nested and private functions as well.
-
-Source lives in `src/orionis_installer`; unit and integration tests live in
-`tests`; distribution verification lives in `scripts`. Message catalogs remain centralized in `messages.py` and
-`ui/messages.py`. Dependency constraints are declared in [pyproject.toml](pyproject.toml)
-and development resolutions in [uv.lock](uv.lock). License: [MIT](LICENCE).
-
-## Releasing to PyPI
-
-Update the version in `pyproject.toml` and `src/orionis_installer/__init__.py`
-together before a release. Configure PyPI authentication through
-`UV_PUBLISH_TOKEN` or another [supported uv authentication method](https://docs.astral.sh/uv/guides/package/#publishing-your-package).
-Run the root release script from PowerShell:
-
-```powershell
-.\release.ps1
-```
-
-The script requires `main` and an `origin` remote. It reads the manifest version,
-cleans old builds, synchronizes Python 3.14, builds wheel/sdist, publishes to PyPI,
-stages all changes, commits the release and pushes `main`. Versions with a major
-component of at least 1 also create and push `v<version>` after checking for tag
-conflicts. Successful releases clean generated builds. Failures stop the remaining
-steps and retain artifacts for inspection or retry; completed uploads and Git
-operations are not rolled back.

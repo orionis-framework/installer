@@ -96,35 +96,38 @@ def probe_json(runner: Runner, python: Path, root: Path, source: str) -> dict[st
     """
     completed = runner.run([python, "-B", "-c", source], cwd=root, timeout=60)
     try:
-        return json.loads(completed.stdout.strip().splitlines()[-1])
+        data = json.loads(completed.stdout.strip().splitlines()[-1])
     except (ValueError, IndexError) as exc:
         raise CompatibilityError(MESSAGES["project_probe_invalid"]) from exc
+    if not isinstance(data, dict):
+        raise CompatibilityError(MESSAGES["project_probe_invalid"])
+    return data
 
-def _requirements_for(data: dict[str, Any], extra: str) -> set[str]:
+def _requirements_for(
+    requirements: tuple[Requirement, ...], environment: dict[str, str], extra: str,
+) -> tuple[Requirement, ...]:
     """
     Collect normalized dependencies selected by one framework extra.
 
     Parameters
     ----------
-    data : dict[str, Any]
-        Framework metadata including Python version and declared requirements.
+    requirements : tuple[Requirement, ...]
+        Parsed framework dependency requirements.
+    environment : dict[str, str]
+        Marker environment for the verified project interpreter.
     extra : str
         Extra whose dependency markers will be evaluated.
 
     Returns
     -------
-    set[str]
-        Normalized names of marker-selected dependencies.
+    tuple[Requirement, ...]
+        Requirements selected by the extra and interpreter environment.
     """
-    environment: dict[str, str] = {key: str(value) for key, value in default_environment().items()}
-    environment["python_version"] = "3.14"
-    environment["python_full_version"] = data["python"]
     environment["extra"] = extra
-    return {
-        canonicalize_name(r.name)
-        for raw in data["requirements"]
-        if (r := Requirement(raw)).marker and r.marker.evaluate(environment)
-    }
+    return tuple(
+        requirement for requirement in requirements
+        if requirement.marker is None or requirement.marker.evaluate(environment)
+    )
 
 def verify_metadata( # NOSONAR
     data: dict[str, Any],
@@ -161,6 +164,16 @@ def verify_metadata( # NOSONAR
         raise CompatibilityError(
             MESSAGES["framework_extras_missing_prefix"] + ", ".join(sorted(missing))
         )
+    requirements = tuple(Requirement(raw) for raw in data["requirements"])
+    environment = {key: str(value) for key, value in default_environment().items()}
+    environment.update(
+        python_version="3.14", python_full_version=data["python"],
+        implementation_version=data["python"],
+    )
+    selected = {
+        extra: _requirements_for(requirements, environment, extra)
+        for extra in ("", *requirement.extras)
+    }
     for aggregate, offered in (
         ("database", {d.value for d in Database if d not in (Database.SQLITE, Database.ALL)}),
         ("storage", {s.value for s in Storage if s not in (Storage.LOCAL, Storage.ALL)}),
@@ -170,21 +183,21 @@ def verify_metadata( # NOSONAR
                 raise CompatibilityError(
                     MESSAGES["aggregate_drivers_missing"].format(aggregate=aggregate)
                 )
-            aggregate_dependencies = _requirements_for(data, aggregate)
+            aggregate_dependencies = {
+                canonicalize_name(dependency.name) for dependency in selected[aggregate]
+            }
             if any(
-                not _requirements_for(data, driver) <= aggregate_dependencies for driver in offered
+                not {
+                    canonicalize_name(dependency.name)
+                    for dependency in _requirements_for(requirements, environment, driver)
+                } <= aggregate_dependencies for driver in offered
             ):
                 raise CompatibilityError(
                     MESSAGES["aggregate_drivers_incomplete"].format(aggregate=aggregate)
                 )
     installed = {canonicalize_name(k): v for k, v in data["installed"].items()}
-    for extra in ("", *requirement.extras):
-        environment = {key: str(value) for key, value in default_environment().items()}
-        environment.update(python_version="3.14", python_full_version=data["python"], extra=extra)
-        for raw in data["requirements"]:
-            dependency = Requirement(raw)
-            if dependency.marker and not dependency.marker.evaluate(environment):
-                continue
+    for dependencies in selected.values():
+        for dependency in dependencies:
             name = canonicalize_name(dependency.name)
             if name not in installed or not dependency.specifier.contains(installed[name]):
                 raise CompatibilityError(MESSAGES["framework_dependency_missing"])
@@ -209,7 +222,9 @@ def verify_configuration(data: dict[str, Any], plan: InstallationPlan) -> None:
         data.get("database") != plan.active_database.value
         or data.get("driver") != plan.active_database.value
         or data.get("storage") != plan.active_storage.value
-        or data.get("storage_driver") != plan.active_storage.value
+        or data.get("storage_driver") != (
+            "aws" if plan.active_storage == Storage.S3 else plan.active_storage.value
+        )
         or data.get("name") != plan.name
     ):
         raise CompatibilityError(MESSAGES["effective_configuration_mismatch"])
