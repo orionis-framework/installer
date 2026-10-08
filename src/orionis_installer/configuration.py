@@ -1,6 +1,7 @@
 import ast
 import base64
 import shutil
+import time
 from pathlib import Path, PureWindowsPath
 import tomlkit
 from dotenv import dotenv_values, set_key
@@ -218,6 +219,35 @@ def config_contract(root: Path, plan: InstallationPlan) -> None:
                 MESSAGES["skeleton_selection_unsupported"].format(active=active)
             )
 
+def _set_env_key(path: Path, key: str, value: str, *, quote_mode: str = "always") -> None:
+    """Retry atomic dotenv updates when Windows briefly denies access.
+
+    Parameters
+    ----------
+    path : Path
+        Environment file updated by python-dotenv.
+    key : str
+        Environment key to add or replace.
+    value : str
+        Raw value passed to python-dotenv.
+    quote_mode : str, optional
+        Quoting policy preserved across all attempts.
+
+    Raises
+    ------
+    PermissionError
+        If access remains denied after five attempts or the error is not a Windows lock.
+    """
+    for attempt in range(5):
+        try:
+            set_key(path, key, value, quote_mode=quote_mode, encoding="utf-8")
+        except PermissionError as exc:
+            if getattr(exc, "winerror", None) not in {5, 32, 33} or attempt == 4:
+                raise
+            time.sleep(0.1 * 2**attempt)
+        else:
+            return
+
 def set_literal_env(path: Path, key: str, value: str) -> None:
     """
     Encode a literal environment value with Orionis' verified base64 type.
@@ -232,7 +262,7 @@ def set_literal_env(path: Path, key: str, value: str) -> None:
         Literal UTF-8 text to preserve through dotenv interpolation.
     """
     encoded = base64.b64encode(value.encode("utf-8")).decode("ascii")
-    set_key(path, key, f"base64:{encoded}", quote_mode="always", encoding="utf-8")
+    _set_env_key(path, key, f"base64:{encoded}")
 
 def read_env(path: Path) -> dict[str, str | None]:
     """
@@ -354,8 +384,8 @@ def configure_environment(root: Path, plan: InstallationPlan) -> None:
     shutil.copyfile(example, path)
     path.chmod(0o600)
     set_literal_env(path, "APP_NAME", plan.name)
-    set_key(path, "FILESYSTEM_DISK", plan.active_storage.value, quote_mode="always")
-    set_key(path, "DB_CONNECTION", plan.active_database.value, quote_mode="always")
+    _set_env_key(path, "FILESYSTEM_DISK", plan.active_storage.value)
+    _set_env_key(path, "DB_CONNECTION", plan.active_database.value)
     if plan.active_database == Database.SQLITE:
         _validate_sqlite_database(root, literal_value(values["DB_DATABASE"]))
         # SQLite creates the file on first migration; never truncate one from the template.
@@ -363,7 +393,7 @@ def configure_environment(root: Path, plan: InstallationPlan) -> None:
         set_literal_env(path, "DB_HOST", literal_value(values.get("DB_HOST")) or "127.0.0.1")
         set_literal_env(path, "DB_DATABASE", plan.name)
         set_literal_env(path, "DB_USERNAME", "configure-me")
-        set_key(path, "DB_PORT", str(PORTS[plan.active_database]), quote_mode="never")
+        _set_env_key(path, "DB_PORT", str(PORTS[plan.active_database]), quote_mode="never")
         if plan.active_database == Database.ORACLE:
             # Oracle uses a service/SID/DSN/TNS, not the shared DB_DATABASE string.
             config = (root / "config" / "database.py").read_text(encoding="utf-8")

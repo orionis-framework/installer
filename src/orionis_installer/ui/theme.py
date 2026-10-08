@@ -4,6 +4,9 @@ from rich.theme import Theme
 THEME = Theme(
     {
         "orionis": "bold #b1a2ff",
+        "logo_outline": "bold #134675",
+        "logo_star": "bold #f4c430",
+        "logo_spark": "bold #4cc9f0",
         "accent": "#78dce8",
         "success": "#8ce3b0",
         "warning": "#f5ca83",

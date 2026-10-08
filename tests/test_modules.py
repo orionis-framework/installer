@@ -8,8 +8,10 @@ import os
 import re
 import subprocess
 import sys
+from http.client import HTTPException
 from pathlib import Path
 from unittest.mock import Mock, patch
+from urllib.error import HTTPError, URLError
 
 import pytest
 from prompt_toolkit.application import create_app_session
@@ -31,7 +33,9 @@ from orionis_installer.prerequisites import Prerequisites, verify_python
 from orionis_installer.processes import Runner, isolated_environment, resolve_executable
 from orionis_installer.skeleton import staging_destination
 from orionis_installer.ui import UI, terminal_choice
-from orionis_installer.ui.output import quote_directory, state_text
+from orionis_installer.ui.output import (
+    _LOGO_PIXELS, _brand_logo, framework_version, quote_directory, state_text,
+)
 from orionis_installer.ui.prompts import InputValidator, Prompts, selector_text
 from orionis_installer.ui.theme import terminal_text
 from orionis_installer.validation import validate_email, validate_name
@@ -149,7 +153,9 @@ def test_output_and_ui_states(tmp_path: Path) -> None:
     ui = UI(file=stream, width=40, no_color=True)
     plan = InstallationPlan(name="example", path=tmp_path)
     result = InstallationResult(plan, creation=State.COMPLETED, published=True)
-    ui.banner()
+    with patch("orionis_installer.ui.output.framework_version", return_value=None):
+        ui.banner()
+    assert "unavailable" in stream.getvalue()
     ui.summary(plan)
     with ui.progress() as progress:
         for value in ("source", "config", "sync", "verify"):
@@ -165,6 +171,101 @@ def test_output_and_ui_states(tmp_path: Path) -> None:
     assert terminal_choice("Disk", [("local", "Local")], "local") == "Disk Local"
     with patch("orionis_installer.ui.has_tty", return_value=False), pytest.raises(ValidationError):
         ui.requireTty()
+
+
+@pytest.mark.parametrize("width, encoding", [
+    (104, "utf-8"), (70, "utf-8"), (40, "utf-8"), (24, "utf-8"),
+    (104, "ascii"), (40, "ascii"),
+])
+def test_banner_versions_and_logo(width: int, encoding: str) -> None:
+    """Display both versions and the brand logo within terminal constraints.
+
+    Parameters
+    ----------
+    width : int
+        Available terminal width in characters.
+    encoding : str
+        Output encoding selecting Unicode or ASCII rendering.
+    """
+    buffer = io.BytesIO()
+    payload = json.dumps({"info": {"version": "9.87.6"}}).encode()
+    with io.TextIOWrapper(buffer, encoding=encoding) as stream, patch(
+        "urllib.request.urlopen", return_value=io.BytesIO(payload),
+    ) as lookup:
+        ui = UI(file=stream, width=width, no_color=True)
+        ui.banner()
+        rendered = buffer.getvalue().decode(encoding)
+
+    assert "Framework" in rendered
+    assert "v9.87.6" in rendered
+    assert "Installer" in rendered
+    assert "v" + __version__ in rendered
+    assert "Python 3.14" in rendered
+    assert all(len(line) <= width for line in rendered.splitlines())
+    assert "\x1b" not in rendered
+    if width >= 70 and encoding == "utf-8":
+        assert any(0x2801 <= ord(character) <= 0x28FF for character in rendered)
+        assert "\u2726" not in rendered
+    else:
+        assert not any(0x2801 <= ord(character) <= 0x28FF for character in rendered)
+    lookup.assert_called_once_with("https://pypi.org/pypi/orionis/json", timeout=2)
+
+
+def test_logo_bitmap_and_palette() -> None:
+    """Preserve every silhouette pixel and the official three-color palette."""
+    assert len(_LOGO_PIXELS) == 52
+    assert {len(row) for row in _LOGO_PIXELS} == {50}
+    logo = _brand_logo()
+    rows = logo.plain.splitlines()
+    assert len(rows) == 13
+    assert {len(row) for row in rows} == {25}
+    assert {span.style for span in logo.spans} == {"logo_outline", "logo_star", "logo_spark"}
+    dot_bits = ((0, 3), (1, 4), (2, 5), (6, 7))
+    for row, line in enumerate(rows):
+        for column, character in enumerate(line):
+            dots = 0 if character == " " else ord(character) - 0x2800
+            for row_offset, bits in enumerate(dot_bits):
+                for column_offset, bit in enumerate(bits):
+                    pixel = _LOGO_PIXELS[row * 4 + row_offset][column * 2 + column_offset]
+                    assert bool(dots & (1 << bit)) == (pixel != ".")
+
+
+@pytest.mark.parametrize("payload", [
+    b"not-json", b"{}", b"[]", b'{"info": {}}', b'{"info": []}',
+    b'{"info": {"version": null}}', b'{"info": {"version": 805}}',
+    b'{"info": {"version": "not-a-version"}}',
+    b'{"info": {"version": "\\u001b[31m0.805.0"}}',
+])
+def test_framework_version_rejects_invalid_metadata(payload: bytes) -> None:
+    """Reject malformed PyPI metadata and terminal control sequences.
+
+    Parameters
+    ----------
+    payload : bytes
+        Invalid JSON response or unusable package version metadata.
+    """
+    with patch("urllib.request.urlopen", return_value=io.BytesIO(payload)):
+        assert framework_version() is None
+
+
+@pytest.mark.parametrize("failure", [
+    TimeoutError("timed out"), URLError("offline"), HTTPException("invalid response"),
+    HTTPError("https://pypi.org/pypi/orionis/json", 503, "unavailable", None, None),
+])
+def test_banner_tolerates_unavailable_pypi(failure: Exception) -> None:
+    """Keep the installer banner usable when the PyPI lookup fails.
+
+    Parameters
+    ----------
+    failure : Exception
+        Transport or HTTP failure raised by the controlled PyPI request.
+    """
+    stream = io.StringIO()
+    with patch("urllib.request.urlopen", side_effect=failure):
+        UI(file=stream, width=104, no_color=True).banner()
+    rendered = stream.getvalue()
+    assert "Framework unavailable" in rendered
+    assert "Installer v" + __version__ in rendered
 
 
 def test_post_install_noninteractive_defaults(tmp_path: Path) -> None:
@@ -317,6 +418,8 @@ def test_offline_cli_installation(tmp_path: Path, failure: bool) -> None:
     runner.run.side_effect = run_tool
     with patch("orionis_installer.cli.Runner", return_value=runner), patch(
         "orionis_installer.cli.check_prerequisites", return_value=prerequisites,
+    ), patch(
+        "orionis_installer.ui.output.framework_version", return_value="0.805.0",
     ):
         response = CliRunner().invoke(app, [
             "new", "offline-example", "--path", str(destination), "--no-interaction",

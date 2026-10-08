@@ -1,8 +1,13 @@
+import json
 import os
 import time
+from collections import Counter
+from http.client import HTTPException
 from pathlib import Path
 from types import TracebackType
 from typing import TextIO
+from urllib import request
+from packaging.version import Version
 from rich import box
 from rich.console import Console, Group
 from rich.live import Live
@@ -25,6 +30,114 @@ _STATES = {
     State.FAILED: ("!", "error"),
     State.CANCELLED: ("!", "warning"),
 }
+
+_LOGO_PIXELS = (
+    "......................BBBBB.......................",
+    "....................BBBBBBBBB.....................",
+    "...................BBB.....BBB....................",
+    ".................BBB.........BBB..................",
+    "...............BBBB...........BBB.................",
+    "..............BBB...............BBB...............",
+    "............BBBB.................BBB..............",
+    "......C....BBB.....................BBB............",
+    "......C..BBBB...........Y...........BBB...........",
+    ".....CC..BB.............Y.............BBB.........",
+    ".....CCC...............YYY.............BBB........",
+    "....CCCC...............YYY...............BBB......",
+    "..CCCCCCCCC............YYY................BBB.....",
+    "CCCCCCCCCCCCC..........YYY..................BB....",
+    ".CCCCCCCCCC............YYY...................BB...",
+    "....CCCC...............YYY...................BB...",
+    ".....CCC...............YYYY..................BB...",
+    "..BB.CCC..............YYYYY..................BB...",
+    "..BB..C...............YYYYY..................BB...",
+    "..BB..C...............YYYYY..................BB...",
+    "..BB..C..............YYYYYYY.................BB...",
+    "..BB................YYYYYYYYY................BB...",
+    "..BB..........YYYYYYYYYYYYYYYYYYYY...........BB...",
+    "..BB....YYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY....BB...",
+    "..BB....YYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY....BB...",
+    "..BB.......YYYYYYYYYYYYYYYYYYYYYYYYYYY.......BB...",
+    "..BB..............YYYYYYYYYYYYY..............BB...",
+    "..BB.................YYYYYYY.................BB...",
+    "..BB..................YYYYY..................BB...",
+    "..BB..................YYYYY...............C..BB...",
+    "..BB..................YYYYY..............CC..BB...",
+    "..BB..................YYYYY..............CCC.BB...",
+    "..BB...................YYYY..............CCC.BB...",
+    "..BB...................YYY...............CCC......",
+    "..BB...................YYY.............CCCCCCC....",
+    "..BBB..................YYY..........CCCCCCCCCCCCC.",
+    "...BBB.................YYY............CCCCCCCCC...",
+    ".....BBB...............YYY..............CCCCC.....",
+    "......BBB..............YYY............B..CCC......",
+    ".......BBBB.............Y............BBB.CCC......",
+    ".........BBB............Y..........BBBB..CCC......",
+    "..........BBBB....................BBB.....C.......",
+    "............BBB..................BBB......C.......",
+    "..............BBB..............BBB................",
+    "...............BBB............BBB.................",
+    ".................BBB........BBB...................",
+    "..................BBBB.....BBB....................",
+    "....................BBBBBBBBB.....................",
+    ".....................BBBBBB.......................",
+    "..................................................",
+    "..................................................",
+    "..................................................",
+)
+
+def _brand_logo() -> Text:
+    """
+    Render the official logo bitmap with eight subpixels per terminal cell.
+
+    Returns
+    -------
+    Text
+        Fixed-size Unicode raster preserving the outline and three pointed stars.
+    """
+    palette = {
+        "B": "logo_outline",
+        "Y": "logo_star",
+        "C": "logo_spark",
+    }
+    dot_pixels = (
+        (0, 0, 0), (0, 1, 3), (1, 0, 1), (1, 1, 4),
+        (2, 0, 2), (2, 1, 5), (3, 0, 6), (3, 1, 7),
+    )
+    lines: list[Text] = []
+    for row in range(0, len(_LOGO_PIXELS), 4):
+        line = Text()
+        for column in range(0, len(_LOGO_PIXELS[0]), 2):
+            dots = 0
+            colors: Counter[str] = Counter()
+            for row_offset, column_offset, bit in dot_pixels:
+                color = _LOGO_PIXELS[row + row_offset][column + column_offset]
+                if color != ".":
+                    dots |= 1 << bit
+                    colors[color] += 1
+            if colors:
+                color = colors.most_common(1)[0][0]
+                line.append(chr(0x2800 + dots), style=palette[color])
+            else:
+                line.append(" ")
+        lines.append(line)
+    return Text("\n").join(lines)
+
+def framework_version() -> str | None:
+    """
+    Read the latest Orionis release from PyPI while tolerating unavailable metadata.
+
+    Returns
+    -------
+    str or None
+        Published framework version, or ``None`` if the request or metadata is invalid.
+    """
+    try:
+        with request.urlopen("https://pypi.org/pypi/orionis/json", timeout=2) as response:
+            metadata = json.load(response)
+        return str(Version(metadata["info"]["version"]))
+    except (OSError, HTTPException, ValueError, KeyError, TypeError):
+        return None
 
 class Output:
     """Present plans, progress, diagnostics, and executable next steps."""
@@ -149,23 +262,24 @@ class Output:
         Returns
         -------
         None
-            Display the identity, runtime labels, and installer version.
+            Display the brand, runtime labels, and framework and installer versions.
         """
         identity = Text("ORIONIS", style="heading")
         identity.append("  /  INSTALLER", style="muted")
         identity.append("\n" + MESSAGES["tagline"], style="orionis")
         separator = " | " if self.console.options.ascii_only else " · "
-        identity.append("\n\nPython 3.14" + separator + "uv" + separator, style="muted")
+        version = framework_version()
+        identity.append("\n\nFramework ", style="muted")
+        identity.append("v" + version if version else "unavailable", style="accent")
+        identity.append(separator + "Installer ", style="muted")
         identity.append("v" + __version__, style="accent")
+        identity.append("\nPython 3.14" + separator + "uv", style="muted")
         if self.panel_width >= 70 and not self.console.options.ascii_only:
-            constellation = Text(
-                "       ·       ✦\n   ·   ╲     ╱\n        ◆───·\n   ✧───╱     ╲\n               ·",
-                style="orionis",
-            )
+            logo = _brand_logo()
             layout = Table.grid(padding=(0, 3))
-            layout.add_column(width=19)
-            layout.add_column(ratio=1)
-            layout.add_row(constellation, identity)
+            layout.add_column(width=len(_LOGO_PIXELS[0]) // 2)
+            layout.add_column(ratio=1, vertical="middle")
+            layout.add_row(logo, identity)
             content: Text | Table = layout
         else:
             content = identity
