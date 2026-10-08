@@ -5,9 +5,10 @@ __pycache__/
 .ruff_cache/
 .mypy_cache/
 .coverage*
+.vscode
 htmlcov/
 coverage.xml
 build/
 dist/
 *.egg-info/
-release.ps1
+RELEASE.ps1

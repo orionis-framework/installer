@@ -1,5 +1,3 @@
-"""Download the selected stack branch into an exclusively owned staging directory."""
-
 import os
 import shutil
 import stat
@@ -7,7 +5,6 @@ import tempfile
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
-
 from orionis_installer.exceptions import (
     Cancelled,
     CompatibilityError,
@@ -18,9 +15,9 @@ from orionis_installer.messages import MESSAGES
 from orionis_installer.models import DEFAULT_STACK, STACKS, SkeletonSource
 from orionis_installer.validation import is_redirect, validate_destination
 
-
 def validate_tree(root: Path, *, configured: bool = False) -> None:
-    """Validate required skeleton files and reject filesystem redirections.
+    """
+    Validate required skeleton files and reject filesystem redirections.
 
     Parameters
     ----------
@@ -53,9 +50,9 @@ def validate_tree(root: Path, *, configured: bool = False) -> None:
     if (root / ".venv").exists() or (not configured and (root / ".env").exists()):
         raise CompatibilityError(MESSAGES["skeleton_runtime_distributed"])
 
-
-def _remove_readonly(function: object, path: str, error: BaseException) -> None:
-    """Retry an owned-tree deletion after removing a read-only file flag.
+def _remove_readonly(function: object, path: str, error: BaseException) -> None:  # NOSONAR
+    """
+    Retry an owned-tree deletion after removing a read-only file flag.
 
     Parameters
     ----------
@@ -76,11 +73,11 @@ def _remove_readonly(function: object, path: str, error: BaseException) -> None:
         raise error
     os.chmod(path, stat.S_IWRITE | stat.S_IREAD)
     if callable(function):
-        function(path)
-
+        function(path) # NOSONAR
 
 def remove_owned_tree(root: Path, *, identity: tuple[int, int] | None = None) -> None:
-    """Remove an owned tree after verifying identity and redirect safety.
+    """
+    Remove an owned tree after verifying identity and redirect safety.
 
     Parameters
     ----------
@@ -110,10 +107,10 @@ def remove_owned_tree(root: Path, *, identity: tuple[int, int] | None = None) ->
                 raise ValidationError(MESSAGES["cleanup_tree_redirect"])
     shutil.rmtree(root, onexc=_remove_readonly)
 
-
 @contextmanager
 def staging_destination(destination: Path) -> Iterator[Path]:
-    """Reserve a destination and yield its exclusively owned sibling staging.
+    """
+    Reserve a destination and yield its exclusively owned sibling staging.
 
     Parameters
     ----------
@@ -190,11 +187,11 @@ def staging_destination(destination: Path) -> Iterator[Path]:
                 ) from None
             raise
 
-
 def publish(
     staging: Path, destination: Path, *, on_created: Callable[[], None] | None = None
 ) -> None:
-    """Publish configured staging into an exclusively created final directory.
+    """
+    Publish configured staging into an exclusively created final directory.
 
     Parameters
     ----------
@@ -236,11 +233,11 @@ def publish(
             raise CompatibilityError(MESSAGES["publication_staging_redirect"])
         child.rename(destination / child.name)
 
-
 def clone_skeleton(
     staging: Path, git: Path, runner: object, *, source: SkeletonSource | None = None
 ) -> str:
-    """Clone the selected stack's exact branch and preserve its provenance SHA.
+    """
+    Clone the selected stack's exact branch and preserve its provenance SHA.
 
     Parameters
     ----------

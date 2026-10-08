@@ -1,7 +1,4 @@
-"""Define the Orionis palette and sanitize terminal-bound text."""
-
 import re
-
 from rich.theme import Theme
 
 THEME = Theme(
@@ -21,9 +18,9 @@ THEME = Theme(
 
 _ANSI = re.compile(r"\x1b(?:\][^\x07\x1b]*(?:\x07|\x1b\\)|\[[0-?]*[ -/]*[@-~]|[@-_])")
 
-
 def terminal_text(value: object) -> str:
-    """Remove terminal control sequences from an external value.
+    """
+    Remove terminal control sequences from an external value.
 
     Parameters
     ----------

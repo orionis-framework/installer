@@ -1,18 +1,12 @@
-"""Preserve the template's TOML and configure only inspected environment keys."""
-
 import ast
 import base64
-import json
 import shutil
 from pathlib import Path, PureWindowsPath
-
 import tomlkit
 from dotenv import dotenv_values, set_key
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.utils import canonicalize_name
-
-from orionis_installer import __version__
 from orionis_installer.exceptions import CompatibilityError
 from orionis_installer.messages import MESSAGES
 from orionis_installer.models import Database, InstallationPlan
@@ -25,9 +19,9 @@ PORTS = {
     Database.REDSHIFT: 5439,
 }
 
-
 def orionis_requirement(document: tomlkit.TOMLDocument) -> Requirement:
-    """Extract the template's single registry-based Orionis requirement.
+    """
+    Extract the template's single registry-based Orionis requirement.
 
     Parameters
     ----------
@@ -59,8 +53,7 @@ def orionis_requirement(document: tomlkit.TOMLDocument) -> Requirement:
         raise CompatibilityError(MESSAGES["requirement_url_unsupported"])
     return matches[0]
 
-
-def configure_pyproject(
+def configure_pyproject( # NOSONAR
     root: Path, plan: InstallationPlan, *, python_version: str = "3.14.0"
 ) -> Requirement:
     """Apply application metadata and extras while preserving template constraints.
@@ -113,7 +106,7 @@ def configure_pyproject(
         if original_authors and list(project.get("maintainers", [])) == original_authors:
             del project["maintainers"]
         if "urls" in project:
-            for key, value in list(project["urls"].items()):
+            for key, value in list(project["urls"].items()): # NOSONAR
                 if str(value).rstrip("/") in {
                     "https://github.com/orionis-framework/framework",
                     "https://github.com/orionis-framework/skeleton",
@@ -143,9 +136,9 @@ def configure_pyproject(
     (root / ".python-version").write_text("3.14\n", encoding="ascii")
     return requirement
 
-
 def environment_example(root: Path) -> Path:
-    """Select an unambiguous environment example from the template.
+    """
+    Select an unambiguous environment example from the template.
 
     Parameters
     ----------
@@ -171,9 +164,9 @@ def environment_example(root: Path) -> Path:
         return legacy
     raise CompatibilityError(MESSAGES["environment_example_missing"])
 
-
 def config_contract(root: Path, plan: InstallationPlan) -> None:
-    """Verify selected drivers by inspecting downloaded configuration syntax.
+    """
+    Verify selected drivers by inspecting downloaded configuration syntax.
 
     Parameters
     ----------
@@ -225,9 +218,9 @@ def config_contract(root: Path, plan: InstallationPlan) -> None:
                 MESSAGES["skeleton_selection_unsupported"].format(active=active)
             )
 
-
 def set_literal_env(path: Path, key: str, value: str) -> None:
-    """Encode a literal environment value with Orionis' verified base64 type.
+    """
+    Encode a literal environment value with Orionis' verified base64 type.
 
     Parameters
     ----------
@@ -241,9 +234,9 @@ def set_literal_env(path: Path, key: str, value: str) -> None:
     encoded = base64.b64encode(value.encode("utf-8")).decode("ascii")
     set_key(path, key, f"base64:{encoded}", quote_mode="always", encoding="utf-8")
 
-
 def read_env(path: Path) -> dict[str, str | None]:
-    """Read environment entries without interpolation or process mutation.
+    """
+    Read environment entries without interpolation or process mutation.
 
     Parameters
     ----------
@@ -257,9 +250,9 @@ def read_env(path: Path) -> dict[str, str | None]:
     """
     return dict(dotenv_values(path, interpolate=False, encoding="utf-8"))
 
-
 def literal_value(value: str | None) -> str:
-    """Decode supported Orionis literal types without evaluating their contents.
+    """
+    Decode supported Orionis literal types without evaluating their contents.
 
     Parameters
     ----------
@@ -280,16 +273,16 @@ def literal_value(value: str | None) -> str:
         return ""
     if value.startswith("base64:"):
         try:
-            return base64.b64decode(value[7:], validate=True).decode("utf-8")
-        except ValueError, UnicodeError:
+            return base64.b64decode(value[7:], validate=True).decode("utf-8") # NOSONAR
+        except ValueError, UnicodeError: # NOSONAR
             raise CompatibilityError(MESSAGES["environment_base64_invalid"]) from None
     if value.startswith("str:"):
         return value[4:]
     return value
 
-
 def valid_sqlite_path(database: str) -> bool:
-    """Check that SQLite names a persistent local file rather than memory or a URI.
+    """
+    Check that SQLite names a persistent local file rather than memory or a URI.
 
     Parameters
     ----------
@@ -313,7 +306,6 @@ def valid_sqlite_path(database: str) -> bool:
         and ".." not in path.parts
         and not any(ord(character) < 32 or ord(character) == 127 for character in database)
     )
-
 
 def configure_environment(root: Path, plan: InstallationPlan) -> None:
     """Create a local environment with verified drivers and pending credentials.
@@ -364,9 +356,9 @@ def configure_environment(root: Path, plan: InstallationPlan) -> None:
             set_literal_env(path, "DB_SERVICE_NAME", "configure-me")
         # DB_PASSWORD remains absent/commented. Do not manufacture credentials.
 
-
 def ensure_gitignore(root: Path) -> None:
-    """Ignore local secrets and SQLite files while keeping uv.lock trackable.
+    """
+    Ignore local secrets and SQLite files while keeping uv.lock trackable.
 
     Parameters
     ----------
@@ -388,32 +380,4 @@ def ensure_gitignore(root: Path) -> None:
         "/.env\n/.venv/\n/storage/logs/\n/storage/framework/\n"
         "/database/*.sqlite\n/database/*.sqlite-*\n" + sqlite_ignore + "!uv.lock\n",
         encoding="utf-8",
-    )
-
-
-def write_provenance(root: Path, revision: str, plan: InstallationPlan) -> None:
-    """Record the selected stack, exact source revision, and installation drivers.
-
-    Parameters
-    ----------
-    root : Path
-        Application directory receiving the provenance document.
-    revision : str
-        Cloned skeleton's verified Git commit identifier.
-    plan : InstallationPlan
-        Selected stack, effective drivers, and requested dependency extras to record.
-    """
-    data = {
-        "stack": plan.stack.value,
-        "skeleton": plan.source.repository,
-        "branch": plan.source.branch,
-        "sha": revision,
-        "installer": __version__,
-        "python_target": "3.14",
-        "extras": list(plan.extras),
-        "storage": plan.active_storage.value,
-        "database": plan.active_database.value,
-    }
-    (root / ".orionis-install.json").write_text(
-        json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )

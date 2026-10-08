@@ -1,12 +1,8 @@
-"""Cross-platform names and destinations, checked without mutating them."""
-
 import os
 import re
 import stat
 from pathlib import Path
-
 import tomlkit
-
 from orionis_installer.exceptions import ValidationError
 from orionis_installer.messages import MESSAGES
 
@@ -14,9 +10,9 @@ RESERVED = {"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"} | {
     f"{prefix}{n}" for prefix in ("COM", "LPT") for n in range(1, 10)
 }
 
-
 def validate_text(value: str, label: str) -> str:
-    """Reject terminal control characters without changing printable text.
+    """
+    Reject terminal control characters without changing printable text.
 
     Parameters
     ----------
@@ -39,9 +35,9 @@ def validate_text(value: str, label: str) -> str:
         raise ValidationError(MESSAGES["text_control_invalid"].format(label=label))
     return value
 
-
 def validate_name(value: str) -> str:
-    """Validate a portable application name without silently normalizing it.
+    """
+    Validate a portable application name without silently normalizing it.
 
     Parameters
     ----------
@@ -67,9 +63,9 @@ def validate_name(value: str) -> str:
         raise ValidationError(MESSAGES["name_invalid"])
     return value
 
-
 def validate_email(value: str) -> str:
-    """Validate a reasonable author email without network access.
+    """
+    Validate a reasonable author email without network access.
 
     Parameters
     ----------
@@ -91,9 +87,9 @@ def validate_email(value: str) -> str:
         raise ValidationError(MESSAGES["email_invalid"])
     return value
 
-
 def is_redirect(path: Path) -> bool:
-    """Detect symbolic links and Windows reparse points without following them.
+    """
+    Detect symbolic links and Windows reparse points without following them.
 
     Parameters
     ----------
@@ -111,9 +107,9 @@ def is_redirect(path: Path) -> bool:
         & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
     )
 
-
 def validate_destination(path: Path) -> Path:
-    """Verify an unused destination outside redirected paths and uv workspaces.
+    """
+    Verify an unused destination outside redirected paths and uv workspaces.
 
     Parameters
     ----------

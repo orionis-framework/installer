@@ -1,15 +1,11 @@
-"""Pure installation choices and observable installation state."""
-
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 from urllib.parse import urlsplit
-
 from orionis_installer.exceptions import ValidationError
 from orionis_installer.messages import MESSAGES
 
 DEFAULT_DESCRIPTION = "A modern application built with Orionis Framework."
-
 
 class Stack(StrEnum):
     """Enumerate the application stacks available in the source catalog."""
@@ -17,10 +13,10 @@ class Stack(StrEnum):
     BLANK = "blank"
     SSR = "ssr"
 
-
 @dataclass(frozen=True)
 class SkeletonSource:
-    """Describe a stack's repository, exact branch, and presentation metadata.
+    """
+    Describe a stack's repository, exact branch, and presentation metadata.
 
     Attributes
     ----------
@@ -40,7 +36,8 @@ class SkeletonSource:
     description: str
 
     def __post_init__(self) -> None:
-        """Reject catalog mistakes before any repository is downloaded.
+        """
+        Reject catalog mistakes before any repository is downloaded.
 
         Raises
         ------
@@ -87,7 +84,6 @@ class SkeletonSource:
         if not valid_repository or invalid_branch:
             raise ValidationError(MESSAGES["skeleton_source_invalid"])
 
-
 STACKS: dict[Stack, SkeletonSource] = {
     Stack.BLANK: SkeletonSource(
         repository="https://github.com/orionis-framework/skeleton",
@@ -103,10 +99,8 @@ STACKS: dict[Stack, SkeletonSource] = {
     ),
 }
 DEFAULT_STACK = Stack.BLANK
-# Backward-compatible aliases describe the default source; selected plans use source.
 SKELETON_URL = STACKS[DEFAULT_STACK].repository
 SKELETON_BRANCH = STACKS[DEFAULT_STACK].branch
-
 
 class Storage(StrEnum):
     """Enumerate supported storage choices and the aggregate SDK selection."""
@@ -116,7 +110,6 @@ class Storage(StrEnum):
     AZURE = "azure"
     GCS = "gcs"
     ALL = "all"
-
 
 class Database(StrEnum):
     """Enumerate supported database choices and the aggregate driver selection."""
@@ -129,7 +122,6 @@ class Database(StrEnum):
     REDSHIFT = "redshift"
     ALL = "all"
 
-
 class State(StrEnum):
     """Represent the observable state of each installation operation."""
 
@@ -140,10 +132,10 @@ class State(StrEnum):
     FAILED = MESSAGES["state_failed"]
     CANCELLED = MESSAGES["state_cancelled"]
 
-
 @dataclass(frozen=True)
 class InstallationPlan:
-    """Describe immutable application metadata and validated driver selections.
+    """
+    Describe immutable application metadata and validated driver selections.
 
     Attributes
     ----------
@@ -181,7 +173,8 @@ class InstallationPlan:
     stack: Stack = DEFAULT_STACK
 
     def __post_init__(self) -> None:
-        """Validate metadata and driver defaults, then normalize the destination.
+        """
+        Validate metadata and driver defaults, then normalize the destination.
 
         Raises
         ------
@@ -211,7 +204,8 @@ class InstallationPlan:
 
     @property
     def source(self) -> SkeletonSource:
-        """Resolve the selected stack's repository and branch from the catalog.
+        """
+        Resolve the selected stack's repository and branch from the catalog.
 
         Returns
         -------
@@ -222,7 +216,8 @@ class InstallationPlan:
 
     @property
     def active_storage(self) -> Storage:
-        """Resolve the concrete storage disk used by the application.
+        """
+        Resolve the concrete storage disk used by the application.
 
         Returns
         -------
@@ -235,7 +230,8 @@ class InstallationPlan:
 
     @property
     def active_database(self) -> Database:
-        """Resolve the concrete database connection used by the application.
+        """
+        Resolve the concrete database connection used by the application.
 
         Returns
         -------
@@ -248,7 +244,8 @@ class InstallationPlan:
 
     @property
     def extras(self) -> tuple[str, ...]:
-        """Build deterministic Orionis extras for factories and selected drivers.
+        """
+        Build deterministic Orionis extras for factories and selected drivers.
 
         Returns
         -------
@@ -262,10 +259,10 @@ class InstallationPlan:
             extras.add("database" if self.database == Database.ALL else self.database.value)
         return tuple(sorted(extras))
 
-
 @dataclass(frozen=True)
 class PostInstallOptions:
-    """Preserve explicit post-install choices independently of prompt defaults.
+    """
+    Preserve explicit post-install choices independently of prompt defaults.
 
     Attributes
     ----------
@@ -281,10 +278,10 @@ class PostInstallOptions:
     migrate: bool | None = None
     open: bool | None = None
 
-
 @dataclass
 class InstallationResult:
-    """Track creation, independent follow-up operations, and diagnostic warnings.
+    """
+    Track creation, independent follow-up operations, and diagnostic warnings.
 
     Attributes
     ----------
@@ -320,7 +317,8 @@ class InstallationResult:
 
     @property
     def exit_code(self) -> int:
-        """Derive the process exit code from creation and follow-up states.
+        """
+        Derive the process exit code from creation and follow-up states.
 
         Returns
         -------

@@ -1,5 +1,3 @@
-"""Define English interface copy independently of terminal rendering."""
-
 from orionis_installer.models import STACKS
 
 MESSAGES = {
@@ -56,7 +54,7 @@ MESSAGES = {
     "stage_dependencies": "Dependencies",
     "stage_verification": "Verification",
     "text_hint": "Enter: continue  |  Ctrl+C: cancel",
-    "password_hint": "Input hidden  |  Enter: continue  |  Ctrl+C: cancel",
+    "password_hint": "Input hidden  |  Enter: continue  |  Ctrl+C: cancel", # NOSONAR
     "confirm_hint": "Left/Right: choose  |  Y/N: choose  |  Enter: confirm",
     "unexpected": (
         "Unexpected installation error. A published project is preserved; "

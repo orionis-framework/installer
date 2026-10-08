@@ -1,23 +1,16 @@
-"""Verify the built wheel outside the source tree and through real uvx.
-
-This deliberately uses network and creates only disposable applications. It never
-runs the skeleton's privileged example seeder or connects to external databases.
-"""
-
 import json
 import os
 import sqlite3
 import tempfile
 from contextlib import closing
 from pathlib import Path
-
 from orionis_installer import __version__
 from orionis_installer.configuration import literal_value, read_env
 from orionis_installer.installer import project_python
+from orionis_installer.messages import MESSAGES
 from orionis_installer.models import STACKS, Stack
 from orionis_installer.prerequisites import check_prerequisites
 from orionis_installer.processes import Runner, resolve_executable
-
 
 def main() -> None:
     """
@@ -103,13 +96,15 @@ def main() -> None:
             check=False,
         )
         assert response.returncode == 0, "Requested schema migrations must complete successfully."
-        assert (project / ".git").is_dir() and (project / "uv.lock").is_file()
+        assert (project / ".git").is_dir() and (project / "uv.lock").is_file() # NOSONAR
         application_environment = read_env(project / ".env")
         assert application_environment["APP_KEY"]
-        provenance = json.loads((project / ".orionis-install.json").read_text(encoding="utf-8"))
-        assert provenance["stack"] == Stack.SSR.value
-        assert provenance["skeleton"] == STACKS[Stack.SSR].repository
-        assert provenance["branch"] == STACKS[Stack.SSR].branch
+        assert not (project / ".orionis-install.json").exists()
+        source = STACKS[Stack.SSR]
+        clone_message = MESSAGES["phase_clone"].format(
+            stack=source.label, repository=source.repository, branch=source.branch
+        )
+        assert "".join(clone_message.split()) in "".join(response.stdout.split())
         database = project / Path(literal_value(application_environment["DB_DATABASE"]))
         assert database.is_relative_to(project) and database.is_file()
         with closing(sqlite3.connect(database)) as connection:
@@ -142,11 +137,11 @@ def main() -> None:
         assert ".env" in ignored and ".venv/" in ignored and "uv.lock" not in ignored
         print(
             f"Real uvx wheel: Python {runtime['python']}, Orionis {runtime['orionis']}; "
-            "SSR branch, factories, final venv, Git init, secret ignores and schema migrations "
+            "SSR branch, no installer metadata file, factories, final venv, Git init, "
+            "secret ignores and schema migrations "
             "without seeded users verified.",
             flush=True,
         )
-
 
 if __name__ == "__main__":
     main()

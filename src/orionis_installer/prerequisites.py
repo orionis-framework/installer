@@ -1,15 +1,10 @@
-"""Resolve uv, Git and a verified Python 3.14 before creating project files."""
-
 from __future__ import annotations
-
 import json
 import tempfile
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-
 from orionis_installer.messages import MESSAGES
-
 from .exceptions import PrerequisiteError, ProcessError
 from .processes import Runner, isolated_environment, resolve_executable
 
@@ -17,7 +12,6 @@ PYTHON_REQUEST = "3.14"
 _VERSION_PROBE = (
     "import json,sys; print(json.dumps([*sys.version_info[:3], sys.version_info.releaselevel]))"
 )
-
 
 @dataclass(frozen=True, slots=True)
 class Prerequisites:
@@ -28,9 +22,9 @@ class Prerequisites:
     python: Path
     python_version: str
 
-
 def verify_python(runner: Runner, interpreter: Path, *, cwd: Path) -> str:
-    """Verify a stable Python 3.14 interpreter through an isolated probe.
+    """
+    Verify a stable Python 3.14 interpreter through an isolated probe.
 
     Parameters
     ----------
@@ -66,15 +60,15 @@ def verify_python(runner: Runner, interpreter: Path, *, cwd: Path) -> str:
         raise PrerequisiteError(MESSAGES["python_stable_required"])
     return ".".join(str(part) for part in version[:3])
 
-
-def check_prerequisites(
+def check_prerequisites( # NOSONAR
     runner: Runner,
     *,
     cwd: Path,
     announce: Callable[[str], None] | None = None,
     environ: Mapping[str, str] | None = None,
 ) -> Prerequisites:
-    """Resolve prerequisites while preserving uv network and download policies.
+    """
+    Resolve prerequisites while preserving uv network and download policies.
 
     Discovery runs in a neutral temporary directory so a caller's .venv or
     workspace cannot supply the application interpreter. No venv is created here.

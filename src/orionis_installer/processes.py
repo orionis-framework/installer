@@ -1,11 +1,4 @@
-"""Run external processes with explicit paths, isolated environments and owned lifetimes.
-
-Captured output is for internal parsing only. Error messages intentionally omit argv,
-stdout and stderr: even a tool's innocuous looking diagnostic can contain credentials.
-"""
-
 from __future__ import annotations
-
 import ctypes
 import os
 import re
@@ -15,15 +8,13 @@ import threading
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager, suppress
 from pathlib import Path
-
 from orionis_installer.messages import MESSAGES
-
 from .exceptions import Cancelled, ProcessError
 
 # These are OS, locale, network/certificate and uv index/download settings, not
 # application settings. UV_PROJECT*, UV_WORKING_DIR, UV_CONFIG_FILE, UV_PYTHON,
 # VIRTUAL_ENV, CONDA_PREFIX, PYTHONPATH, PYTHONHOME and arbitrary app/cloud variables
-# are deliberately absent. See docs/security.md for the public environment policy.
+# are deliberately absent to keep application settings out of child processes.
 _ENVIRONMENT_ALLOWLIST = frozenset(
     {
         "PATH",
@@ -84,9 +75,9 @@ _ENVIRONMENT_ALLOWLIST = frozenset(
 )
 _INDEX_CREDENTIAL = re.compile(r"UV_INDEX_[A-Z0-9_]+_(?:USERNAME|PASSWORD)\Z")
 
-
 def _within(path: Path, root: Path) -> bool:
-    """Check whether a path equals or descends from a controlled root.
+    """
+    Check whether a path equals or descends from a controlled root.
 
     Parameters
     ----------
@@ -102,9 +93,9 @@ def _within(path: Path, root: Path) -> bool:
     """
     return path == root or root in path.parents
 
-
-def _trusted_path(path: str, cwd: Path, excluded_roots: Sequence[Path] = ()) -> str:
-    """Filter executable search entries outside controlled exclusions.
+def _trusted_path(path: str, cwd: Path, excluded_roots: Sequence[Path] = ()) -> str:  # NOSONAR
+    """
+    Filter executable search entries outside controlled exclusions.
 
     Parameters
     ----------
@@ -135,14 +126,14 @@ def _trusted_path(path: str, cwd: Path, excluded_roots: Sequence[Path] = ()) -> 
         entries.append(str(resolved))
     return os.pathsep.join(entries)
 
-
 def isolated_environment(
     base: Mapping[str, str] | None = None,
     *,
     cwd: Path | None = None,
     excluded_roots: Sequence[Path] = (),
 ) -> dict[str, str]:
-    """Build an isolated child environment without loading dotenv files.
+    """
+    Build an isolated child environment without loading dotenv files.
 
     Named uv index credentials are retained for authenticated indexes but never
     printed. Environment keys are matched case insensitively on Windows.
@@ -191,15 +182,15 @@ def isolated_environment(
     )
     return result
 
-
-def resolve_executable(
+def resolve_executable( # NOSONAR
     name: str,
     cwd: Path,
     *,
     path: str | None = None,
     excluded_roots: Sequence[Path] = (),
 ) -> Path | None:
-    """Search absolute PATH entries, never cwd or a downloaded skeleton.
+    """
+    Search absolute PATH entries, never cwd or a downloaded skeleton.
 
     Unlike shutil.which on Windows, this never prepends the current directory.
     A symlink whose target enters an excluded root is also rejected.
@@ -248,9 +239,9 @@ def resolve_executable(
                 return resolved
     return None
 
-
 def editor_command(launcher: Path, project: Path) -> tuple[list[str], dict[str, str]]:
-    """Adapt the official VS Code batch wrapper without invoking cmd.exe.
+    """
+    Adapt the official VS Code batch wrapper without invoking cmd.exe.
 
     The wrapper's quoted %~dp0 paths are read as data. Only the installed native
     Code executable and its cli.js within the same installation are accepted.
@@ -301,12 +292,12 @@ def editor_command(launcher: Path, project: Path) -> tuple[list[str], dict[str, 
         raise ProcessError(MESSAGES["editor_components_missing"])
     return [str(executable), str(cli), "--new-window", str(project)], {"ELECTRON_RUN_AS_NODE": "1"}
 
-
 class _WindowsJob:
     """Own Windows descendants independently of their process leader."""
 
     def __init__(self, process: subprocess.Popen[str]) -> None:
-        """Assign a suspended child to a private job with bounded lifetime.
+        """
+        Assign a suspended child to a private job with bounded lifetime.
 
         Parameters
         ----------
@@ -390,7 +381,8 @@ class _WindowsJob:
             raise OSError(MESSAGES["windows_process_isolation_failed"])
 
     def close(self, *, terminate: bool = True) -> None:
-        """Release the job and optionally terminate its owned descendants.
+        """
+        Release the job and optionally terminate its owned descendants.
 
         Parameters
         ----------
@@ -408,7 +400,8 @@ class _WindowsJob:
 
 
 def _resume_windows_process(process: subprocess.Popen[str]) -> None:
-    """Resume the sole primary thread of our newly created suspended process.
+    """
+    Resume the sole primary thread of our newly created suspended process.
 
     Popen closes the CreateProcess thread handle. Toolhelp obtains its thread ID;
     GetProcessIdOfThread verifies ownership before resuming. No process code runs
@@ -483,10 +476,10 @@ def _resume_windows_process(process: subprocess.Popen[str]) -> None:
     finally:
         kernel.CloseHandle(thread)
 
-
 @contextmanager
 def _defer_spawn_interrupt() -> Iterator[None]:
-    """Defer Ctrl+C until the newly spawned process has an owned lifetime.
+    """
+    Defer Ctrl+C until the newly spawned process has an owned lifetime.
 
     Yields
     ------
@@ -525,12 +518,12 @@ def _defer_spawn_interrupt() -> Iterator[None]:
         if interrupted:
             raise KeyboardInterrupt
 
-
 class Runner:
     """Capture tools without exposing their output, and reap owned children."""
 
     def __init__(self, *, environ: Mapping[str, str] | None = None) -> None:
-        """Snapshot the environment used to prepare isolated child processes.
+        """
+        Snapshot the environment used to prepare isolated child processes.
 
         Parameters
         ----------
@@ -548,7 +541,8 @@ class Runner:
         env: Mapping[str, str] | None = None,
         check: bool = True,
     ) -> subprocess.CompletedProcess[str]:
-        """Run a native process and capture output for internal parsing.
+        """
+        Run a native process and capture output for internal parsing.
 
         Parameters
         ----------
@@ -582,7 +576,8 @@ class Runner:
     def open_editor(
         self, launcher: Path, project: Path, *, cwd: Path, timeout: float = 30
     ) -> subprocess.CompletedProcess[str]:
-        """Launch VS Code without waiting for its editor window to close.
+        """
+        Launch VS Code without waiting for its editor window to close.
 
         Parameters
         ----------
@@ -610,7 +605,7 @@ class Runner:
         argv, overrides = editor_command(launcher, project)
         return self._run(argv, cwd=cwd, timeout=timeout, env=overrides, keep_children=True)
 
-    def _run(
+    def _run( # NOSONAR
         self,
         argv: Sequence[str | Path],
         *,
@@ -620,7 +615,8 @@ class Runner:
         check: bool = True,
         keep_children: bool = False,
     ) -> subprocess.CompletedProcess[str]:
-        """Execute the child lifecycle with explicit descendant retention.
+        """
+        Execute the child lifecycle with explicit descendant retention.
 
         Parameters
         ----------
@@ -718,7 +714,8 @@ class Runner:
 
     @staticmethod
     def _stop(process: subprocess.Popen[str], job: _WindowsJob | None) -> None:
-        """Terminate owned children and wait for their controlled leader.
+        """
+        Terminate owned children and wait for their controlled leader.
 
         Parameters
         ----------

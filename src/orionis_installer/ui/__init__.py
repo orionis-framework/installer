@@ -1,18 +1,15 @@
-"""Combine safe terminal output with guarded interactive input."""
-
 import os
 import sys
 from collections.abc import Callable, Mapping
 from typing import TextIO
-
 from orionis_installer.exceptions import ValidationError
 from orionis_installer.ui.messages import MESSAGES
 from orionis_installer.ui.output import Output
 from orionis_installer.ui.prompts import Prompts
 
-
 def has_tty() -> bool:
-    """Check whether both input and output are attached to terminals.
+    """
+    Check whether both input and output are attached to terminals.
 
     Returns
     -------
@@ -21,14 +18,14 @@ def has_tty() -> bool:
     """
     return bool(sys.stdin.isatty() and sys.stdout.isatty())
 
-
 class UI(Output):
     """Coordinate rendering and interactive prompts for installer phases."""
 
     def __init__(
         self, *, no_color: bool = False, file: TextIO | None = None, width: int | None = None
     ) -> None:
-        """Initialize output and prompts with matching color preferences.
+        """
+        Initialize output and prompts with matching color preferences.
 
         Parameters
         ----------
@@ -44,7 +41,8 @@ class UI(Output):
         self.prompts = Prompts(no_color=self.no_color)
 
     def require_tty(self) -> None:
-        """Reject interactive input when either stream lacks a terminal.
+        """
+        Reject interactive input when either stream lacks a terminal.
 
         Raises
         ------
@@ -61,7 +59,8 @@ class UI(Output):
         validator: Callable[[str], object] | None = None,
         password: bool = False,
     ) -> str:
-        """Read a validated value from an interactive terminal.
+        """
+        Read a validated value from an interactive terminal.
 
         Parameters
         ----------
@@ -161,7 +160,6 @@ class UI(Output):
         value = self.prompts.confirm(label, default)
         self.choice(label, MESSAGES["yes" if value else "no"])
         return value
-
 
 def terminal_choice(label: str, choices: list[tuple[str, str]], value: str) -> str:
     """Combine a selection question with its accepted caption.

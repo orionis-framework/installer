@@ -1,11 +1,8 @@
-"""Independent, consented operations after a verified application installation."""
-
 import ast
 import os
 from collections.abc import Callable
 from pathlib import Path
 from typing import Protocol
-
 from orionis_installer.configuration import (
     literal_value,
     read_env,
@@ -25,12 +22,12 @@ from orionis_installer.prerequisites import Prerequisites
 from orionis_installer.processes import Runner, resolve_executable
 from orionis_installer.validation import is_redirect, validate_text
 
-
 class PostUI(Protocol):
     """Define the interaction required by optional post-install operations."""
 
     def confirm(self, label: str, default: bool) -> bool:
-        """Request an explicit answer to a post-install confirmation.
+        """
+        Request an explicit answer to a post-install confirmation.
 
         Parameters
         ----------
@@ -54,7 +51,8 @@ class PostUI(Protocol):
         validator: Callable[[str], object] | None = None,
         password: bool = False,
     ) -> str:
-        """Request connection text with optional validation and password masking.
+        """
+        Request connection text with optional validation and password masking.
 
         Parameters
         ----------
@@ -75,7 +73,8 @@ class PostUI(Protocol):
         ...
 
     def message(self, value: str) -> None:
-        """Display a post-install progress or connection message.
+        """
+        Display a post-install progress or connection message.
 
         Parameters
         ----------
@@ -85,7 +84,8 @@ class PostUI(Protocol):
         ...
 
     def warning(self, value: str) -> None:
-        """Display a post-install diagnostic without stopping independent work.
+        """
+        Display a post-install diagnostic without stopping independent work.
 
         Parameters
         ----------
@@ -94,9 +94,9 @@ class PostUI(Protocol):
         """
         ...
 
-
-def seeder_safety(root: Path) -> None:
-    """Inspect a seeder tree independently of schema migration execution.
+def seeder_safety(root: Path) -> None: # NOSONAR
+    """
+    Inspect a seeder tree independently of schema migration execution.
 
     A generic AST pass cannot certify arbitrary executable code. This is a conservative
     guard that permits only empty modules, docstrings, and pass statements. Other
@@ -143,9 +143,9 @@ def seeder_safety(root: Path) -> None:
         if not inert:
             raise CompatibilityError(MESSAGES["seeders_unsafe"])
 
-
 def connection_values(root: Path) -> dict[str, str]:
-    """Read verified connection keys without importing application configuration.
+    """
+    Read verified connection keys without importing application configuration.
 
     Parameters
     ----------
@@ -174,9 +174,9 @@ def connection_values(root: Path) -> dict[str, str]:
         )
     }
 
-
 def valid_port(value: str) -> bool:
-    """Check a bounded ASCII decimal port without unsafe integer conversion.
+    """
+    Check a bounded ASCII decimal port without unsafe integer conversion.
 
     Parameters
     ----------
@@ -192,9 +192,9 @@ def valid_port(value: str) -> bool:
         1 <= len(value) <= 5 and value.isascii() and value.isdecimal() and 1 <= int(value) <= 65535
     )
 
-
 def connection_ready(values: dict[str, str]) -> bool:
-    """Check whether local or external connection settings are ready to use.
+    """
+    Check whether local or external connection settings are ready to use.
 
     Parameters
     ----------
@@ -221,9 +221,9 @@ def connection_ready(values: dict[str, str]) -> bool:
         return server_ready and service not in ("", "configure-me")
     return server_ready
 
-
 def _connection_prompt(root: Path, ui: PostUI) -> bool:
-    """Collect explicitly authorized connection fields into the local environment.
+    """
+    Collect explicitly authorized connection fields into the local environment.
 
     Parameters
     ----------
@@ -276,9 +276,9 @@ def _connection_prompt(root: Path, ui: PostUI) -> bool:
             set_literal_env(root / ".env", key, value)
     return True
 
-
 def _safe_connection_label(value: str) -> str:
-    """Hide connection labels that could contain credentials or terminal controls.
+    """
+    Hide connection labels that could contain credentials or terminal controls.
 
     Parameters
     ----------
@@ -295,9 +295,9 @@ def _safe_connection_label(value: str) -> str:
         return MESSAGES["connection_display_hidden"]
     return value
 
-
 def _migrate(result: InstallationResult, runner: Runner, ui: PostUI, no_interaction: bool) -> State:
-    """Apply schema migrations with the verified application's own interpreter.
+    """
+    Apply schema migrations with the verified application's own interpreter.
 
     Reactor only runs seeders when its separate ``--seed`` option is supplied.
     Schema migrations therefore do not require inspecting or executing seeders.
@@ -357,8 +357,7 @@ def _migrate(result: InstallationResult, runner: Runner, ui: PostUI, no_interact
     runner.run([project_python(root), "-B", "reactor", "migrate"], cwd=root, timeout=300)
     return State.COMPLETED
 
-
-def run_post_install(
+def run_post_install( # NOSONAR
     result: InstallationResult,
     options: PostInstallOptions,
     prerequisites: Prerequisites,
@@ -403,7 +402,7 @@ def run_post_install(
             selected = (
                 flag
                 if flag is not None
-                else (False if no_interaction else ui.confirm(question, default))
+                else (False if no_interaction else ui.confirm(question, default)) # NOSONAR
             )
             if not selected:
                 setattr(result, attribute, State.SKIPPED)

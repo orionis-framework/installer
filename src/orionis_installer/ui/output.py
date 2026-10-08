@@ -1,11 +1,8 @@
-"""Render a responsive, safe terminal interface and honest installation progress."""
-
 import os
 import time
 from pathlib import Path
 from types import TracebackType
 from typing import TextIO
-
 from rich import box
 from rich.console import Console, Group
 from rich.live import Live
@@ -14,7 +11,6 @@ from rich.rule import Rule
 from rich.spinner import Spinner
 from rich.table import Table
 from rich.text import Text
-
 from orionis_installer import __version__
 from orionis_installer.exceptions import Cancelled
 from orionis_installer.models import InstallationPlan, InstallationResult, State
@@ -30,23 +26,28 @@ _STATES = {
     State.CANCELLED: ("!", "warning"),
 }
 
-
 class Output:
     """Present plans, progress, diagnostics, and executable next steps."""
 
     def __init__(
         self, *, no_color: bool = False, file: TextIO | None = None, width: int | None = None
     ) -> None:
-        """Configure a shared console that honors monochrome environments.
+        """
+        Configure the output console and honor monochrome settings.
 
         Parameters
         ----------
         no_color : bool, optional
-            Whether to disable color in addition to honoring NO_COLOR.
+            Disable color; ``NO_COLOR`` also disables it when present.
         file : TextIO or None, optional
-            Output stream, defaulting to standard output.
+            Destination stream; ``None`` uses standard output.
         width : int or None, optional
-            Explicit rendering width, or the console-detected width.
+            Rendering width in characters; ``None`` uses console detection.
+
+        Returns
+        -------
+        None
+            Store the configured Rich console.
         """
         self.console = Console(
             file=file,
@@ -59,55 +60,75 @@ class Output:
 
     @property
     def panel_width(self) -> int:
-        """Limit the reading width while fitting narrow terminals.
+        """
+        Return the panel width capped at 104 characters.
 
         Returns
         -------
         int
-            Console width capped at 104 characters for comfortable reading.
+            Available console width, limited to 104 characters.
         """
         return min(self.console.width, 104)
 
     @property
     def line_character(self) -> str:
-        """Choose a divider that the output encoding can represent.
+        """
+        Choose a divider compatible with the output encoding.
 
         Returns
         -------
         str
-            ASCII dash for legacy output, or a Unicode line for modern terminals.
+            ASCII dash in ASCII-only mode, otherwise a Unicode horizontal line.
         """
         return "-" if self.console.options.ascii_only else "─"
 
     def message(self, message: str) -> None:
-        """Display a sanitized informational message.
+        """
+        Display an informational message without interpreting terminal controls.
 
         Parameters
         ----------
         message : str
-            Text to render without interpreting markup or control sequences.
+            Message to sanitize and render as literal text.
+
+        Returns
+        -------
+        None
+            Write the message to the console.
         """
         self.console.print(Text(terminal_text(message), style="accent"))
 
     def warning(self, message: str) -> None:
-        """Display a warning whose meaning remains clear without color.
+        """
+        Display a sanitized warning with a visible prefix.
 
         Parameters
         ----------
         message : str
-            Diagnostic describing a limitation or pending configuration.
+            Warning describing a limitation or pending configuration.
+
+        Returns
+        -------
+        None
+            Write the warning to the console, including in monochrome mode.
         """
         self.console.print(
             Text(MESSAGES["warning_prefix"] + terminal_text(message), style="warning")
         )
 
     def error(self, message: str) -> None:
-        """Present an actionable failure in a distinct diagnostic panel.
+        """
+        Display a sanitized error in a responsive diagnostic panel.
 
         Parameters
         ----------
         message : str
-            Failure diagnostic that excludes operational secrets.
+            Failure description; omit credentials and other secrets.
+
+        Returns
+        -------
+        None
+            Write the error panel to the console.
         """
         self.console.print()
         self.console.print(
@@ -122,7 +143,14 @@ class Output:
         )
 
     def banner(self) -> None:
-        """Render a constellation identity with an adaptive compact layout."""
+        """
+        Render the installer banner with a terminal-compatible layout.
+
+        Returns
+        -------
+        None
+            Display the identity, runtime labels, and installer version.
+        """
         identity = Text("ORIONIS", style="heading")
         identity.append("  /  INSTALLER", style="muted")
         identity.append("\n" + MESSAGES["tagline"], style="orionis")
@@ -153,14 +181,20 @@ class Output:
         )
 
     def section(self, label: str, detail: str = "") -> None:
-        """Introduce a wizard section with a quiet divider and optional guidance.
+        """
+        Introduce a wizard section with a divider and optional guidance.
 
         Parameters
         ----------
         label : str
-            Section heading, rendered as literal terminal text.
+            Section heading to sanitize and render as literal text.
         detail : str, optional
-            Short contextual guidance displayed below the divider.
+            Guidance displayed below the divider only when nonempty.
+
+        Returns
+        -------
+        None
+            Write the divider, optional guidance, and surrounding spacing.
         """
         self.console.print()
         self.console.print(
@@ -176,14 +210,20 @@ class Output:
         self.console.print()
 
     def choice(self, label: str, caption: str) -> None:
-        """Keep an accepted selection visible after its interactive menu closes.
+        """
+        Record an accepted selection in the console output.
 
         Parameters
         ----------
         label : str
-            Question whose completed answer is recorded.
+            Question text to map to a short label when available.
         caption : str
-            Selected visible caption without terminal control sequences.
+            Selected answer to sanitize and retain in the output.
+
+        Returns
+        -------
+        None
+            Write the accepted answer with its label and success marker.
         """
         short_labels = {
             MESSAGES["stack"]: LABELS["stack"],
@@ -201,17 +241,18 @@ class Output:
         self.console.print(line)
 
     def _table(self, rows: list[tuple[str, object]]) -> Table:
-        """Build readable label-value rows that collapse on narrow terminals.
+        """
+        Build a wrapping label-value grid for the available panel width.
 
         Parameters
         ----------
-        rows : list of tuple
-            Label keys and values in presentation order.
+        rows : list[tuple[str, object]]
+            Pairs of ``LABELS`` keys and values in display order.
 
         Returns
         -------
         Table
-            Responsive grid using literal text and wrapping complete values.
+            Single-column grid below 54 characters; two-column grid otherwise.
         """
         table = Table.grid(padding=(0, 2), expand=True)
         compact = self.panel_width < 54
@@ -231,12 +272,18 @@ class Output:
         return table
 
     def _path(self, path: Path) -> None:
-        """Keep a complete destination on one copyable output line.
+        """
+        Print the complete destination without Rich wrapping or truncation.
 
         Parameters
         ----------
         path : Path
-            Absolute project destination to display without truncation.
+            Project directory to display as a labeled path.
+
+        Returns
+        -------
+        None
+            Write the labeled, sanitized destination.
         """
         self.console.print(
             Text(LABELS["path"] + ": " + terminal_text(path), style="muted"),
@@ -246,12 +293,18 @@ class Output:
         )
 
     def _command(self, command: str) -> None:
-        """Keep a shell command complete and easy to copy.
+        """
+        Print a complete shell command without Rich wrapping or truncation.
 
         Parameters
         ----------
         command : str
-            Controlled command already quoted for the target shell.
+            Shell command with arguments already quoted for the target shell.
+
+        Returns
+        -------
+        None
+            Write the sanitized command in the command style.
         """
         self.console.print(
             Text(terminal_text(command), style="command"),
@@ -261,29 +314,36 @@ class Output:
         )
 
     def _group(self, title: str, rows: list[tuple[str, object]]) -> Group:
-        """Compose a quiet heading and its configuration grid.
+        """
+        Group an uppercase heading with a responsive configuration grid.
 
         Parameters
         ----------
         title : str
-            Trusted interface heading.
-        rows : list of tuple
-            Label-value rows to display below the heading.
+            Trusted interface heading to convert to uppercase.
+        rows : list[tuple[str, object]]
+            Pairs of ``LABELS`` keys and values to display below the heading.
 
         Returns
         -------
         Group
-            Heading, spacing, and responsive grid rendered as one block.
+            Heading, blank line, and label-value grid as one renderable.
         """
         return Group(Text(title.upper(), style="accent"), Text(""), self._table(rows))
 
     def summary(self, plan: InstallationPlan) -> None:
-        """Show the selected source and effective services before installation.
+        """
+        Display the installation plan and full destination path.
 
         Parameters
         ----------
         plan : InstallationPlan
-            Validated application metadata, selected stack, and active drivers.
+            Project metadata, source selection, drivers, and dependency extras.
+
+        Returns
+        -------
+        None
+            Write the responsive summary panel and destination path.
         """
         application: list[tuple[str, object]] = [
             ("name", Text(terminal_text(plan.name), style="heading")),
@@ -346,13 +406,19 @@ class Output:
         )
         self._path(plan.path)
 
-    def final(self, result: InstallationResult) -> None:
-        """Present verified outcomes and appropriate commands for the created project.
+    def final(self, result: InstallationResult) -> None: # NOSONAR
+        """
+        Display installation outcomes, warnings, and available next steps.
 
         Parameters
         ----------
         result : InstallationResult
-            Observed creation, publication, and follow-up operation outcomes.
+            Project plan, observed outcomes, runtime versions, and warnings.
+
+        Returns
+        -------
+        None
+            Write results and warnings, adding commands only for published projects.
         """
         if result.creation == State.COMPLETED:
             ready = "ready_warnings" if result.warnings or result.exit_code else "ready"
@@ -424,12 +490,13 @@ class Output:
                 self._command("uv run python -B reactor migrate")
 
     def progress(self) -> InstallationProgress:
-        """Create a context that tracks the installer's four ordered stages.
+        """
+        Create a context manager for the four installation stages.
 
         Returns
         -------
         InstallationProgress
-            Progress context whose step method accepts installer phase messages.
+            Unstarted progress context using this output console.
         """
         return InstallationProgress(self)
 
@@ -438,12 +505,18 @@ class InstallationProgress:
     """Track actual stage transitions without estimating network completion."""
 
     def __init__(self, output: Output) -> None:
-        """Configure a stage timeline for the supplied output stream.
+        """
+        Initialize pending stages, timing state, and the progress spinner.
 
         Parameters
         ----------
         output : Output
-            Shared console and output helpers used by the installer.
+            Console and rendering helpers shared with the installer.
+
+        Returns
+        -------
+        None
+            Store the output and initialize the four pending stages.
         """
         self.output = output
         self.labels = [
@@ -460,12 +533,13 @@ class InstallationProgress:
         self.spinner = Spinner("dots", style="accent")
 
     def __enter__(self) -> InstallationProgress:
-        """Start live rendering only when the output supports terminal animation.
+        """
+        Start progress timing and select live or static rendering.
 
         Returns
         -------
         InstallationProgress
-            This context with an active timer and optional live display.
+            This context with animation enabled only on capable terminals.
         """
         self.started = time.monotonic()
         self.output.console.print()
@@ -482,12 +556,18 @@ class InstallationProgress:
         return self
 
     def step(self, message: str) -> None:
-        """Advance only when the installer reports a new operation.
+        """
+        Advance the stage timeline and display the active operation.
 
         Parameters
         ----------
         message : str
-            Sanitized description of the operation that is about to begin.
+            Operation detail to sanitize and display for the active stage.
+
+        Returns
+        -------
+        None
+            Complete the prior stage, start the next, and refresh or print progress.
         """
         if self.current >= 0:
             self.states[self.current] = State.COMPLETED
@@ -503,12 +583,13 @@ class InstallationProgress:
             self.output.console.print(line)
 
     def __rich__(self) -> Panel:
-        """Render current states, a real elapsed timer, and the active operation.
+        """
+        Render stage states, the active operation, and elapsed time.
 
         Returns
         -------
         Panel
-            Responsive timeline without a fabricated percentage estimate.
+            Responsive timeline with elapsed time instead of a completion estimate.
         """
         table = Table.grid(padding=(0, 2), expand=True)
         compact = self.output.panel_width < 54
@@ -548,25 +629,33 @@ class InstallationProgress:
         exception: BaseException | None,
         traceback: TracebackType | None,
     ) -> None:
-        """Stop animation and preserve the observed successful or interrupted state.
+        """
+        Finalize the active stage and stop progress rendering.
+
+        Distinguish successful completion, cancellation, and failure.
 
         Parameters
         ----------
-        exception_type : type of BaseException or None
-            Raised exception type, or None after a successful context body.
+        exception_type : type[BaseException] or None
+            Raised exception type, or ``None`` after a successful context body.
         exception : BaseException or None
-            Exception instance used to distinguish cancellation from failure.
+            Raised exception instance used to distinguish cancellation from failure.
         traceback : TracebackType or None
-            Original exception traceback, propagated unchanged by the context.
+            Context-body traceback, or ``None`` when no exception was raised.
+
+        Returns
+        -------
+        None
+            Leave any exception raised by the context body unsuppressed.
         """
         if self.current >= 0:
-            self.states[self.current] = (
-                State.COMPLETED
-                if exception_type is None
-                else State.CANCELLED
-                if isinstance(exception, (Cancelled, KeyboardInterrupt, EOFError))
-                else State.FAILED
-            )
+            if exception_type is None:
+                current_state = State.COMPLETED
+            elif isinstance(exception, (Cancelled, KeyboardInterrupt, EOFError)):
+                current_state = State.CANCELLED
+            else:
+                current_state = State.FAILED
+            self.states[self.current] = current_state
         if exception_type is None and self.current == len(self.labels) - 1:
             self.detail = MESSAGES["progress_completed"]
         elif exception_type is not None:
@@ -579,36 +668,36 @@ class InstallationProgress:
                 Text("  " + self.detail, style=_STATES[self.states[self.current]][1])
             )
 
-
 def state_text(state: State) -> Text:
-    """Render a state with a visible marker and a matching color.
+    """
+    Format an operation state with its marker and semantic style.
 
     Parameters
     ----------
     state : State
-        Actual operation state to display.
+        Operation status to display.
 
     Returns
     -------
     Text
-        Literal state caption that remains meaningful without color.
+        Styled marker and state value, readable without color.
     """
     marker, style = _STATES[state]
     return Text(marker + " " + state.value, style=style)
 
-
 def quote_directory(path: Path) -> str:
-    """Quote a destination for PowerShell or a POSIX shell.
+    """
+    Quote a directory argument for the host platform's shell.
 
     Parameters
     ----------
     path : Path
-        Project directory to use in the displayed change-directory command.
+        Destination for the displayed change-directory command.
 
     Returns
     -------
     str
-        Sanitized directory argument with shell-appropriate quoting.
+        Sanitized argument using PowerShell quoting on Windows or POSIX quoting otherwise.
     """
     value = terminal_text(path)
     if os.name == "nt":

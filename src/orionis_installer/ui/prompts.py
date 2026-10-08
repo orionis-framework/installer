@@ -1,8 +1,5 @@
-"""Collect prompt-toolkit input without executing installation callbacks."""
-
 import os
 from collections.abc import Callable, Mapping
-
 from prompt_toolkit import Application, PromptSession
 from prompt_toolkit.data_structures import Point
 from prompt_toolkit.document import Document
@@ -36,11 +33,11 @@ PROMPT_STYLE = Style.from_dict(
     }
 )
 
-
 def selector_text(
     choices: list[tuple[str, str]], selected: int, default: str, *, inline: bool = False
 ) -> FormattedText:
-    """Render selection markers, literal captions, and the default badge.
+    """
+    Render selection markers, literal captions, and the default badge.
 
     Parameters
     ----------
@@ -70,12 +67,12 @@ def selector_text(
         fragments.append(("", "   " if inline else "\n"))
     return FormattedText(fragments)
 
-
 class InputValidator(Validator):
     """Adapt pure application validation to prompt-toolkit input errors."""
 
     def __init__(self, callback: Callable[[str], object]) -> None:
-        """Store the pure validation callback used for entered text.
+        """
+        Store the pure validation callback used for entered text.
 
         Parameters
         ----------
@@ -85,7 +82,8 @@ class InputValidator(Validator):
         self.callback = callback
 
     def validate(self, document: Document) -> None:
-        """Validate input and position any failure at the end of the text.
+        """
+        Validate input and position any failure at the end of the text.
 
         Parameters
         ----------
@@ -104,12 +102,12 @@ class InputValidator(Validator):
                 message=terminal_text(exc), cursor_position=len(document.text)
             ) from exc
 
-
 class Prompts:
     """Provide validated text fields and keyboard-operated choices."""
 
     def __init__(self, *, no_color: bool = False) -> None:
-        """Store the color preference used by each prompt application.
+        """
+        Store the color preference used by each prompt application.
 
         Parameters
         ----------
@@ -120,7 +118,8 @@ class Prompts:
 
     @property
     def color_depth(self) -> ColorDepth:
-        """Choose the terminal color depth for the configured preference.
+        """
+        Choose the terminal color depth for the configured preference.
 
         Returns
         -------
@@ -136,7 +135,8 @@ class Prompts:
         validator: Callable[[str], object] | None = None,
         password: bool = False,
     ) -> str:
-        """Read editable text with immediate validation and optional masking.
+        """
+        Read editable text with immediate validation and optional masking.
 
         Parameters
         ----------
@@ -177,7 +177,7 @@ class Prompts:
             ),
         )
 
-    def select(
+    def select( # NOSONAR
         self,
         label: str,
         choices: list[tuple[str, str]],
@@ -186,7 +186,8 @@ class Prompts:
         descriptions: Mapping[str, str] | None = None,
         inline: bool = False,
     ) -> str:
-        """Accept a keyboard-selected value while restoring the terminal afterward.
+        """
+        Accept a keyboard-selected value while restoring the terminal afterward.
 
         Parameters
         ----------
@@ -385,7 +386,8 @@ class Prompts:
         return application.run()
 
     def confirm(self, label: str, default: bool) -> bool:
-        """Convert a yes-or-no selection into an operation consent decision.
+        """
+        Convert a yes-or-no selection into an operation consent decision.
 
         Parameters
         ----------

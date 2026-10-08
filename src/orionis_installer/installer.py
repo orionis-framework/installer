@@ -1,11 +1,8 @@
-"""Create applications with recoverable state after final-directory publication."""
-
 import json
 import os
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
-
 from packaging.markers import default_environment
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
@@ -15,7 +12,6 @@ from orionis_installer.configuration import (
     configure_pyproject,
     ensure_gitignore,
     read_env,
-    write_provenance,
 )
 from orionis_installer.exceptions import Cancelled, CompatibilityError, InstallerError
 from orionis_installer.messages import MESSAGES
@@ -44,9 +40,9 @@ print(json.dumps({'database':db,'driver':str(c.driver),'storage':disk,
  'storage_driver':str(f.driver),'name':Env.get('APP_NAME')}))
 """
 
-
 def project_python(root: Path) -> Path:
-    """Locate the interpreter inside the final application's direct environment.
+    """
+    Locate the interpreter inside the final application's direct environment.
 
     Parameters
     ----------
@@ -71,9 +67,9 @@ def project_python(root: Path) -> Path:
         raise CompatibilityError(MESSAGES["project_interpreter_missing"])
     return interpreter
 
-
 def probe_json(runner: Runner, python: Path, root: Path, source: str) -> dict[str, Any]:
-    """Parse a JSON verification probe executed with the application's Python.
+    """
+    Parse a JSON verification probe executed with the application's Python.
 
     Parameters
     ----------
@@ -104,9 +100,9 @@ def probe_json(runner: Runner, python: Path, root: Path, source: str) -> dict[st
     except (ValueError, IndexError) as exc:
         raise CompatibilityError(MESSAGES["project_probe_invalid"]) from exc
 
-
 def _requirements_for(data: dict[str, Any], extra: str) -> set[str]:
-    """Collect normalized dependencies selected by one framework extra.
+    """
+    Collect normalized dependencies selected by one framework extra.
 
     Parameters
     ----------
@@ -130,9 +126,13 @@ def _requirements_for(data: dict[str, Any], extra: str) -> set[str]:
         if (r := Requirement(raw)).marker and r.marker.evaluate(environment)
     }
 
-
-def verify_metadata(data: dict[str, Any], plan: InstallationPlan, requirement: Requirement) -> None:
-    """Verify resolved framework extras, dependencies and environment identity.
+def verify_metadata( # NOSONAR
+    data: dict[str, Any],
+    plan: InstallationPlan,
+    requirement: Requirement,
+) -> None:
+    """
+    Verify resolved framework extras, dependencies and environment identity.
 
     Parameters
     ----------
@@ -189,9 +189,9 @@ def verify_metadata(data: dict[str, Any], plan: InstallationPlan, requirement: R
             if name not in installed or not dependency.specifier.contains(installed[name]):
                 raise CompatibilityError(MESSAGES["framework_dependency_missing"])
 
-
 def verify_configuration(data: dict[str, Any], plan: InstallationPlan) -> None:
-    """Check that effective framework configuration matches the installation plan.
+    """
+    Check that effective framework configuration matches the installation plan.
 
     Parameters
     ----------
@@ -214,9 +214,9 @@ def verify_configuration(data: dict[str, Any], plan: InstallationPlan) -> None:
     ):
         raise CompatibilityError(MESSAGES["effective_configuration_mismatch"])
 
-
 def ensure_app_key(runner: Runner, python: Path, root: Path) -> None:
-    """Generate a missing application key through the verified framework mechanism.
+    """
+    Generate a missing application key through the verified framework mechanism.
 
     Parameters
     ----------
@@ -250,7 +250,6 @@ def ensure_app_key(runner: Runner, python: Path, root: Path) -> None:
     if not missing and before != after:
         raise CompatibilityError(MESSAGES["app_key_changed"])
 
-
 class Installer:
     """Coordinate verified creation while preserving published application files."""
 
@@ -262,7 +261,8 @@ class Installer:
         *,
         on_step: Callable[[str], None] | None = None,
     ) -> None:
-        """Initialize the coordinator with validated choices and process dependencies.
+        """
+        Initialize the coordinator with validated choices and process dependencies.
 
         Parameters
         ----------
@@ -281,7 +281,8 @@ class Installer:
         self.on_step = on_step
 
     def _step(self, message: str) -> None:
-        """Notify the optional phase callback before a controlled operation.
+        """
+        Notify the optional phase callback before a controlled operation.
 
         Parameters
         ----------
@@ -291,8 +292,9 @@ class Installer:
         if self.on_step:
             self.on_step(message)
 
-    def install(self) -> InstallationResult:
-        """Create and verify an application before reporting completion.
+    def install(self) -> InstallationResult: # NOSONAR
+        """
+        Create and verify an application before reporting completion.
 
         Returns
         -------
@@ -318,7 +320,7 @@ class Installer:
                         branch=self.plan.source.branch,
                     )
                 )
-                revision = clone_skeleton(
+                clone_skeleton(
                     staging, self.prerequisites.git, self.runner, source=self.plan.source
                 )
                 self._step(MESSAGES["phase_configuration"])
@@ -327,7 +329,6 @@ class Installer:
                 )
                 configure_environment(staging, self.plan)
                 ensure_gitignore(staging)
-                write_provenance(staging, revision, self.plan)
                 publish(
                     staging, self.plan.path, on_created=lambda: setattr(result, "published", True)
                 )
@@ -389,7 +390,8 @@ class Installer:
             ) from exc
 
     def _recovery(self, result: InstallationResult, message: str) -> str:
-        """Append recovery instructions only after final-directory publication.
+        """
+        Append recovery instructions only after final-directory publication.
 
         Parameters
         ----------

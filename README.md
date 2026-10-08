@@ -12,8 +12,6 @@ validation. A constellation identity, responsive plan cards, a live installation
 timeline and a status-aware completion panel guide the whole experience. Narrow
 terminals and plain logs are supported; `NO_COLOR` and `--no-color` disable colors.
 
-![Orionis installer interface with illustrative application data](docs/installer-preview.svg)
-
 ## Installation
 
 Install [uv](https://docs.astral.sh/uv/getting-started/installation/) and
@@ -117,8 +115,8 @@ driver. There is no destructive `--force` option.
 
 Edit the centralized `STACKS` dictionary in `src/orionis_installer/models.py` to
 set the project and branch for each stack. The wizard derives its choices and
-descriptions from this catalog; CLI selection, download, review and provenance
-all resolve the same entry.
+descriptions from this catalog; CLI selection, download and review all resolve
+the same entry.
 
 ```python
 STACKS = {
@@ -140,8 +138,9 @@ STACKS = {
 To add a stack, add its machine value to `Stack` and its source to `STACKS`.
 Sources use credential-free HTTPS repository URLs and explicit branch names.
 Only the selected branch is cloned; a missing branch fails without falling back.
-The generated `.orionis-install.json` records stack, repository, branch and commit
-SHA. Stack selection chooses a source: application features come from that branch.
+The installer does not create an `.orionis-install.json` metadata file in the
+application. Stack selection chooses a source: application features come from
+that branch.
 
 ## Drivers and configuration
 
@@ -187,8 +186,8 @@ manually from the generated project.
 ## Installation and recovery
 
 The installer clones the catalog's selected repository and branch into a sibling staging
-area, validates it, records its SHA and removes only that clone's `.git`. It
-configures files before publication and then runs one main
+area, validates its checked-out branch and revision and removes only that clone's
+`.git`. It configures files before publication and then runs one main
 `uv sync --python 3.14` at the final location. `.venv` is never moved from staging.
 Python, the installed Orionis distribution, extras, lockfile, APP_KEY and effective
 configuration are checked before reporting success.
@@ -250,7 +249,6 @@ uv run --no-sync mypy
 uv run --no-sync pytest --cov=orionis_installer --cov-report=term-missing
 uv build
 uv run --no-sync python scripts/verify_distribution.py
-uv run --no-sync python scripts/preview_ui.py
 ```
 
 Normal tests use controlled terminal input, disposable processes and explicit
@@ -277,9 +275,6 @@ Remove-Item Env:ORIONIS_REAL_SMOKE
 including lint, formatting, types, tests, build and the clean-wheel entry point.
 Runtime checks on an individual machine do not verify the other platforms or
 external cloud/database services. CI does not publish the package.
-
-`scripts/preview_ui.py` exports the actual renderer to `docs/installer-preview.svg`
-with illustrative application data, without downloading or creating an application.
 
 Follow the English, typed documentation style of
 [Orionis commands](https://github.com/orionis-framework/framework/blob/1.x/orionis/console/commands/support/key_generate.py)

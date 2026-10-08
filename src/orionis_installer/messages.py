@@ -1,5 +1,3 @@
-"""Define import-safe English copy for core diagnostics and installation states."""
-
 MESSAGES: dict[str, str] = {
     "project_environment_missing": "uv did not create a local .venv directly inside the project.",
     "project_interpreter_missing": "The project environment has no Python interpreter.",

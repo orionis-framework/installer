@@ -1,5 +1,0 @@
-.env
-.venv/
-storage/logs/
-storage/framework/
-database/*.sqlite
