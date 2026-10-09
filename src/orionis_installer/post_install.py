@@ -354,7 +354,7 @@ def _migrate(result: InstallationResult, runner: Runner, ui: PostUI, no_interact
     ui.message(label + MESSAGES["migration_data_warning"])
     # Exact equivalent of `uv run --no-sync python -B reactor migrate`,
     # without further syncing or selecting an interpreter from uvx/PATH.
-    runner.run([project_python(root), "-B", "reactor", "migrate"], cwd=root, timeout=300)
+    runner.run([project_python(root), "-B", "reactor", "migrate","--seed"], cwd=root, timeout=300)
     return State.COMPLETED
 
 def run_post_install( # NOSONAR
