@@ -480,7 +480,7 @@ class Output:
             ("storage", dict(STORAGE_CHOICES)[plan.active_storage.value]),
             ("drivers_database", dict(DATABASE_CHOICES)[plan.database.value]),
             ("database", dict(DATABASE_CHOICES)[plan.active_database.value]),
-            ("extras", ",".join(plan.extras)),
+            ("extras", ",".join(plan.extras) or MESSAGES["no_extras"]),
         ]
         if self.panel_width >= 92:
             columns = Table.grid(expand=True, padding=(0, 4))

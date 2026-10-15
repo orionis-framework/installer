@@ -12,6 +12,8 @@ class Stack(StrEnum):
 
     BLANK = "blank"
     SSR = "ssr"
+    SLIM_API = "slim_api"
+    SLIM_MCP = "slim_mcp"
 
 @dataclass(frozen=True)
 class SkeletonSource:
@@ -84,18 +86,31 @@ class SkeletonSource:
         if not valid_repository or invalid_branch:
             raise ValidationError(MESSAGES["skeleton_source_invalid"])
 
+BASE_REPOSITORY = "https://github.com/orionis-framework/skeleton"
 STACKS: dict[Stack, SkeletonSource] = {
     Stack.BLANK: SkeletonSource(
-        repository="https://github.com/orionis-framework/skeleton",
+        repository=BASE_REPOSITORY,
         branch="blank_1.x",
         label="Blank",
         description="A minimal foundation for building your application from scratch.",
     ),
     Stack.SSR: SkeletonSource(
-        repository="https://github.com/orionis-framework/skeleton",
+        repository=BASE_REPOSITORY,
         branch="ssr_1.x",
         label="SSR",
         description="A starting point for applications with server-side rendering.",
+    ),
+    Stack.SLIM_API: SkeletonSource(
+        repository=BASE_REPOSITORY,
+        branch="slim_api_1.x",
+        label="Slim API",
+        description="A lightweight starting point for API and WebSocket applications.",
+    ),
+    Stack.SLIM_MCP: SkeletonSource(
+        repository=BASE_REPOSITORY,
+        branch="slim_mcp_1.x",
+        label="Slim MCP",
+        description="A starting point for Model Context Protocol applications.",
     ),
 }
 DEFAULT_STACK = Stack.BLANK
@@ -250,14 +265,14 @@ class InstallationPlan:
     @property
     def extras(self) -> tuple[str, ...]:
         """
-        Build deterministic Orionis extras for factories and selected drivers.
+        Build deterministic Orionis extras for selected optional drivers.
 
         Returns
         -------
         tuple[str, ...]
             Sorted, unique extras using aggregate names for all-driver selections.
         """
-        extras = {"factories"}
+        extras: set[str] = set()
         if self.storage != Storage.LOCAL:
             extras.add("storage" if self.storage == Storage.ALL else self.storage.value)
         if self.database != Database.SQLITE:

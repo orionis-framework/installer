@@ -4,19 +4,22 @@ import ast
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
+import tomlkit
 from packaging.requirements import Requirement
 
 from orionis_installer.configuration import (
-    configure_environment, configure_pyproject, ensure_gitignore, literal_value, read_env,
+    configure_environment, configure_pyproject, ensure_gitignore, literal_value,
+    orionis_requirement, read_env,
 )
 from orionis_installer.installer import (
     CONFIG_PROBE, Installer, probe_json, project_python, verify_configuration,
 )
 from orionis_installer.models import (
-    Database, InstallationPlan, PostInstallOptions, Stack, State, Storage,
+    STACKS, Database, InstallationPlan, PostInstallOptions, Stack, State, Storage,
 )
 from orionis_installer.post_install import connection_ready, connection_values, run_post_install
 from orionis_installer.prerequisites import check_prerequisites
@@ -32,26 +35,75 @@ DATABASE_SELECTIONS = [(value, None) for value in Database] + [
 ]
 
 
-@pytest.fixture(params=list(Stack))
-def skeleton_root(request: pytest.FixtureRequest) -> Path:
-    """Locate a separately downloaded skeleton branch for read-only inspection.
+@pytest.fixture(scope="session")
+def skeleton_roots() -> dict[Stack, Path]:
+    """Check every configured audit checkout before running the real matrix.
+
+    Returns
+    -------
+    dict[Stack, Path]
+        Read-only checkouts indexed by their public stack identifiers.
+    """
+    root = os.environ.get("ORIONIS_SKELETON_AUDIT")
+    if not root:
+        pytest.skip("Set ORIONIS_SKELETON_AUDIT to downloaded stack directories")
+    paths = {stack: Path(root) / stack.value for stack in STACKS}
+    missing = [
+        f"{stack.value} ({STACKS[stack].branch})"
+        for stack, path in paths.items() if not path.is_dir()
+    ]
+    if missing:
+        pytest.exit(
+            f"ORIONIS_SKELETON_AUDIT is incomplete at {root}: missing {', '.join(missing)}. "
+            "Download every catalog branch before running the skeleton audit.",
+            returncode=2,
+        )
+    return paths
+
+
+@pytest.fixture(params=list(Stack), scope="session")
+def skeleton_root(request: pytest.FixtureRequest, skeleton_roots: dict[Stack, Path]) -> Path:
+    """Locate a checked skeleton branch for read-only inspection.
 
     Parameters
     ----------
     request : pytest.FixtureRequest
         Stack selected for this fixture invocation.
+    skeleton_roots : dict[Stack, Path]
+        Complete set of separately downloaded catalog branches.
 
     Returns
     -------
     Path
         Downloaded branch under the explicitly configured audit directory.
     """
-    root = os.environ.get("ORIONIS_SKELETON_AUDIT")
-    if not root:
-        pytest.skip("Set ORIONIS_SKELETON_AUDIT to downloaded blank/ssr directories")
-    path = Path(root) / request.param.value
-    assert path.is_dir()
-    return path
+    return skeleton_roots[request.param]
+
+
+def test_incomplete_skeleton_audit_fails_once(tmp_path: Path) -> None:
+    """Report missing branches once instead of repeating every matrix setup error.
+
+    Parameters
+    ----------
+    tmp_path : Path
+        Incomplete audit directory reproducing the original release checkout set.
+    """
+    (tmp_path / Stack.BLANK.value).mkdir()
+    (tmp_path / Stack.SSR.value).mkdir()
+    result = subprocess.run(
+        [
+            sys.executable, "-m", "pytest",
+            f"{Path(__file__).resolve()}::test_real_skeleton_structure",
+            "-q", "-p", "no:cacheprovider",
+        ],
+        capture_output=True, text=True, check=False,
+        env=os.environ | {"ORIONIS_SKELETON_AUDIT": str(tmp_path), "PYTEST_ADDOPTS": ""},
+    )
+    output = result.stdout + result.stderr
+    assert result.returncode == 2, output
+    assert "slim_api (slim_api_1.x)" in output
+    assert "slim_mcp (slim_mcp_1.x)" in output
+    assert "ERROR at setup" not in output
 
 
 @pytest.mark.parametrize("storage,default_storage", STORAGE_SELECTIONS)
@@ -60,7 +112,7 @@ def test_real_environment_matrix(
     skeleton_root: Path, tmp_path: Path, storage: Storage, default_storage: Storage | None,
     database: Database, default_database: Database | None,
 ) -> None:
-    """Generate each menu combination from both real minimal environment files.
+    """Generate each menu combination from every real minimal environment file.
 
     Parameters
     ----------
@@ -78,13 +130,18 @@ def test_real_environment_matrix(
         Concrete default when all database drivers are requested.
     """
     shutil.copytree(skeleton_root / "config", tmp_path / "config")
-    (tmp_path / "database").mkdir()
+    if (skeleton_root / "database").is_dir():
+        (tmp_path / "database").mkdir()
     for name in ("pyproject.toml", ".env.example", ".gitignore"):
         shutil.copyfile(skeleton_root / name, tmp_path / name)
     original = (tmp_path / ".env.example").read_bytes()
+    original_requirement = orionis_requirement(
+        tomlkit.parse((tmp_path / "pyproject.toml").read_text(encoding="utf-8")),
+    )
     plan = InstallationPlan(
         name="matrix-example", path=tmp_path, storage=storage, database=database,
         default_storage=default_storage, default_database=default_database,
+        stack=Stack(skeleton_root.name),
     )
     requirement = configure_pyproject(tmp_path, plan)
     configure_environment(tmp_path, plan)
@@ -94,7 +151,8 @@ def test_real_environment_matrix(
     assert values["DB_CONNECTION"] == plan.active_database.value
     assert literal_value(values["APP_NAME"]) == plan.name
     assert requirement.extras.issuperset(plan.extras)
-    assert Requirement(str(requirement)).specifier.contains("0.805.0")
+    assert Requirement(str(requirement)).specifier == original_requirement.specifier
+    assert requirement.marker == original_requirement.marker
     assert (tmp_path / ".env.example").read_bytes() == original
     assert values.get("DB_PASSWORD") is None
     ready = connection_ready(connection_values(tmp_path))
@@ -119,7 +177,12 @@ def test_real_skeleton_structure(skeleton_root: Path) -> None:
     assert len(routing) == 1
     paths = {keyword.arg: keyword.value.value for keyword in routing[0].keywords
              if isinstance(keyword.value, ast.Constant)}
-    for kind in ("web", "api", "console", "websocket", "ai"):
+    kinds = (
+        {"api", "websocket"} if skeleton_root.name == Stack.SLIM_API.value
+        else {"web", "api", "console", "websocket", "ai"}
+    )
+    assert set(paths) == kinds | {"health"}
+    for kind in kinds:
         assert paths[kind] == f"routes/{kind}.py"
         assert (skeleton_root / paths[kind]).is_file()
 

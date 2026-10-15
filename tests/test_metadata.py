@@ -12,6 +12,35 @@ from orionis_installer.installer import probe_json, verify_configuration, verify
 from orionis_installer.models import Database, InstallationPlan, Storage
 
 
+@pytest.mark.parametrize("installed", [{"faker": "40.40.0"}, {}])
+def test_core_metadata_without_optional_drivers(
+    tmp_path: Path, installed: dict[str, str],
+) -> None:
+    """Verify Faker as a core dependency without requesting a factories extra.
+
+    Parameters
+    ----------
+    tmp_path : Path
+        Isolated project destination.
+    installed : dict[str, str]
+        Resolved core dependencies, or an incomplete environment.
+    """
+    plan = InstallationPlan(name="example", path=tmp_path)
+    assert plan.extras == ()
+    data = {
+        "python": "3.14.0", "prefix": str(tmp_path / ".venv"), "version": "0.932.0",
+        "extras": ["s3", "azure", "gcs", "storage", "mysql", "pgsql", "oracle",
+                   "sqlserver", "redshift", "database"],
+        "requirements": ["faker>=40.40.0,<41.0"], "installed": installed,
+    }
+    requirement = Requirement("orionis>=0.932.0")
+    if installed:
+        verify_metadata(data, plan, requirement)
+    else:
+        with pytest.raises(CompatibilityError):
+            verify_metadata(data, plan, requirement)
+
+
 @pytest.mark.parametrize("installed", [{"core": "1.2", "driver": "2"}, {"core": "0.1"}])
 def test_metadata_parses_requirements_once(tmp_path: Path, installed: dict[str, str]) -> None:
     """Parse each dependency once while enforcing selected markers and versions.
@@ -23,12 +52,12 @@ def test_metadata_parses_requirements_once(tmp_path: Path, installed: dict[str, 
     installed : dict[str, str]
         Installed dependency versions, including an invalid resolution.
     """
-    plan = InstallationPlan(name="example", path=tmp_path)
-    requirement = Requirement("orionis[factories]>=1")
-    requirements = ["core>=1", "driver>=2; extra == 'factories'", "absent; extra == 's3'"]
+    plan = InstallationPlan(name="example", path=tmp_path, database=Database.MYSQL)
+    requirement = Requirement("orionis[mysql]>=1")
+    requirements = ["core>=1", "driver>=2; extra == 'mysql'", "absent; extra == 's3'"]
     data = {
         "python": "3.14.0", "prefix": str(tmp_path / ".venv"), "version": "1.0",
-        "extras": ["factories"], "requirements": requirements, "installed": installed,
+        "extras": ["mysql"], "requirements": requirements, "installed": installed,
     }
     with patch("orionis_installer.installer.Requirement", wraps=Requirement) as parser:
         if "driver" in installed:
@@ -96,15 +125,14 @@ def test_aggregate_preserves_driver_requirements(tmp_path: Path, complete: bool)
         marker += " or extra == 'database'"
     data = {
         "python": "3.14.0", "prefix": str(tmp_path / ".venv"), "version": "1.0",
-        "extras": ["database", "factories", "mysql", "pgsql", "oracle", "sqlserver", "redshift"],
+        "extras": ["database", "mysql", "pgsql", "oracle", "sqlserver", "redshift"],
         "requirements": ["core>=1", f"mysql-driver>=2; {marker}"],
         "installed": {"core": "1", "mysql-driver": "2"},
     }
-    requirement = Requirement("orionis[database,factories]>=1")
+    requirement = Requirement("orionis[database]>=1")
     if complete:
         verify_metadata(data, plan, requirement)
     else:
         with pytest.raises(CompatibilityError):
             verify_metadata(data, plan, requirement)
-
 

@@ -7,16 +7,62 @@ from pathlib import Path
 
 import pytest
 
+from orionis_installer import configuration
 from orionis_installer.configuration import (
-    configure_environment, literal_value, read_env, set_literal_env, valid_sqlite_path,
+    configure_environment, configure_pyproject, literal_value, read_env, set_literal_env,
+    valid_sqlite_path,
 )
-from orionis_installer.models import Database, InstallationPlan
+from orionis_installer.models import Database, InstallationPlan, Stack, Storage
 
 
+@pytest.mark.parametrize("stack", ["blank", "ssr", "slim_api", "slim_mcp"])
+@pytest.mark.parametrize("storage", list(Storage))
+@pytest.mark.parametrize("database", list(Database))
+def test_manifest_driver_extras(
+    tmp_path: Path, stack: str, storage: Storage, database: Database,
+) -> None:
+    """Request only the framework extras required by the selected drivers.
+
+    Parameters
+    ----------
+    tmp_path : Path
+        Isolated application directory.
+    stack : str
+        Public stack identifier.
+    storage : Storage
+        Requested storage SDK selection.
+    database : Database
+        Requested database driver selection.
+    """
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname="template"\nrequires-python=">=3.14"\n'
+        'dependencies=["orionis>=0.932.0"]\n',
+        encoding="utf-8",
+    )
+    plan = InstallationPlan(
+        name="example-app", path=tmp_path, stack=Stack(stack), storage=storage, database=database,
+    )
+    expected: set[str] = set()
+    if storage != Storage.LOCAL:
+        expected.add("storage" if storage == Storage.ALL else storage.value)
+    if database != Database.SQLITE:
+        expected.add("database" if database == Database.ALL else database.value)
+
+    requirement = configure_pyproject(tmp_path, plan)
+
+    assert plan.extras == tuple(sorted(expected))
+    assert requirement.extras == expected
+    assert str(requirement) == (
+        "orionis" + (f"[{','.join(sorted(expected))}]" if expected else "") + ">=0.932.0"
+    )
+
+
+@pytest.mark.parametrize("database_directory", [False, True])
 @pytest.mark.parametrize("database", [value for value in Database if value != Database.ALL])
 @pytest.mark.parametrize("winerror", [None, 5, 32, 33])
 def test_minimal_environment_supports_database(
     tmp_path: Path, database: Database, monkeypatch: pytest.MonkeyPatch, winerror: int | None,
+    database_directory: bool,
 ) -> None:
     """Generate every concrete database from the skeleton's minimal environment.
 
@@ -29,10 +75,16 @@ def test_minimal_environment_supports_database(
     monkeypatch : pytest.MonkeyPatch
         Scoped replacement and retry-delay controls.
     winerror : int or None
-        Windows error raised on each first replacement, or no simulated lock.
+        Windows error raised before writing and on each first replacement,
+        or no simulated lock.
+    database_directory : bool
+        Whether the template already includes a SQLite file and its parent directory.
     """
     replace = os.replace
+    write_key = configuration.set_key
     attempts = 0
+    failures = 0
+    first_write = True
     delays: list[float] = []
 
     def replace_with_lock(source: Path, destination: Path) -> None:
@@ -45,10 +97,30 @@ def test_minimal_environment_supports_database(
             raise error
         replace(source, destination)
 
+    def write_with_lock(
+        path: Path, key: str, value: str, *, quote_mode: str, encoding: str,
+    ) -> None:
+        """Count every retried write failure, including locks before replacement."""
+        nonlocal failures, first_write
+        try:
+            if first_write:
+                first_write = False
+                if winerror is not None:
+                    error = PermissionError(errno.EACCES, "Environment temporarily locked")
+                    error.winerror = winerror
+                    raise error
+            write_key(path, key, value, quote_mode=quote_mode, encoding=encoding)
+        except PermissionError:
+            failures += 1
+            raise
+
     monkeypatch.setattr(os, "replace", replace_with_lock)
+    monkeypatch.setattr(configuration, "set_key", write_with_lock)
     monkeypatch.setattr(time, "sleep", delays.append)
     (tmp_path / "config").mkdir()
-    (tmp_path / "database").mkdir()
+    if database_directory:
+        (tmp_path / "database").mkdir()
+        (tmp_path / "database" / "database.sqlite").write_bytes(b"existing database")
     (tmp_path / ".env.example").write_text(
         'APP_NAME="Orionis"\nAPP_KEY=\nFILESYSTEM_DISK=local\n'
         'DB_CONNECTION=sqlite\nDB_DATABASE=database/database.sqlite\n',
@@ -74,9 +146,16 @@ def test_minimal_environment_supports_database(
     assert literal_value(values["APP_NAME"]) == plan.name
     assert "DB_PASSWORD" not in values
     assert not list(tmp_path.glob(".tmp_*"))
-    assert len(delays) == (attempts // 2 if winerror is not None else 0)
+    assert len(delays) == failures
+    if winerror is not None:
+        assert delays[:2] == [0.1, 0.2]
     if database == Database.SQLITE:
         assert values["DB_DATABASE"] == "database/database.sqlite"
+        assert (tmp_path / "database").is_dir()
+        if database_directory:
+            assert (tmp_path / "database" / "database.sqlite").read_bytes() == b"existing database"
+        else:
+            assert not (tmp_path / "database" / "database.sqlite").exists()
     else:
         assert literal_value(values["DB_HOST"]) == "127.0.0.1"
         assert literal_value(values["DB_USERNAME"]) == "configure-me"

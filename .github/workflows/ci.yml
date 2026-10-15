@@ -46,6 +46,22 @@ jobs:
           path: .ci-skeleton/ssr
           persist-credentials: false
 
+      - name: Checkout Slim API skeleton
+        uses: actions/checkout@v6
+        with:
+          repository: orionis-framework/skeleton
+          ref: slim_api_1.x
+          path: .ci-skeleton/slim_api
+          persist-credentials: false
+
+      - name: Checkout Slim MCP skeleton
+        uses: actions/checkout@v6
+        with:
+          repository: orionis-framework/skeleton
+          ref: slim_mcp_1.x
+          path: .ci-skeleton/slim_mcp
+          persist-credentials: false
+
       - name: Set up uv and Python
         uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4
         with:

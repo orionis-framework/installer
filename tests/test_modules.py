@@ -24,7 +24,8 @@ from orionis_installer.cli import app
 from orionis_installer.exceptions import CompatibilityError, ProcessError, ValidationError
 from orionis_installer.installer import CONFIG_PROBE, METADATA_PROBE
 from orionis_installer.models import (
-    STACKS, Database, InstallationPlan, InstallationResult, PostInstallOptions, State, Storage,
+    DEFAULT_STACK, STACKS, Database, InstallationPlan, InstallationResult, PostInstallOptions,
+    Stack, State, Storage,
 )
 from orionis_installer.post_install import (
     connection_ready, connection_values, run_post_install, seeder_safety, valid_port,
@@ -33,6 +34,7 @@ from orionis_installer.prerequisites import Prerequisites, verify_python
 from orionis_installer.processes import Runner, isolated_environment, resolve_executable
 from orionis_installer.skeleton import staging_destination
 from orionis_installer.ui import UI, terminal_choice
+from orionis_installer.ui.messages import STACK_CHOICES
 from orionis_installer.ui.output import (
     _LOGO_PIXELS, _brand_logo, framework_version, quote_directory, state_text,
 )
@@ -157,6 +159,7 @@ def test_output_and_ui_states(tmp_path: Path) -> None:
         ui.banner()
     assert "unavailable" in stream.getvalue()
     ui.summary(plan)
+    assert "Orionis extras: None" in stream.getvalue()
     with ui.progress() as progress:
         for value in ("source", "config", "sync", "verify"):
             progress.step(value)
@@ -315,7 +318,16 @@ def test_python_and_connection_checks(tmp_path: Path) -> None:
 def test_public_constants_and_validation() -> None:
     """Verify source catalogs and portable application metadata validation."""
     assert __version__
-    assert len(STACKS) == 2
+    expected = {
+        "blank": "blank_1.x",
+        "ssr": "ssr_1.x",
+        "slim_api": "slim_api_1.x",
+        "slim_mcp": "slim_mcp_1.x",
+    }
+    assert {stack.value: source.branch for stack, source in STACKS.items()} == expected
+    assert set(STACKS) == set(Stack)
+    assert [(stack.value, source.label) for stack, source in STACKS.items()] == STACK_CHOICES
+    assert DEFAULT_STACK == Stack.BLANK
     assert Storage.ALL.value == "all"
     assert Database.ALL.value == "all"
     assert validate_email("name@example.com") == "name@example.com"
@@ -325,7 +337,8 @@ def test_public_constants_and_validation() -> None:
 
 
 @pytest.mark.parametrize("failure", [False, True])
-def test_offline_cli_installation(tmp_path: Path, failure: bool) -> None:
+@pytest.mark.parametrize("stack", [None, "blank", "ssr", "slim_api", "slim_mcp"])
+def test_offline_cli_installation(tmp_path: Path, failure: bool, stack: str | None) -> None:
     """Exercise CLI publication and recovery using controlled tool responses.
 
     Parameters
@@ -334,8 +347,12 @@ def test_offline_cli_installation(tmp_path: Path, failure: bool) -> None:
         Parent containing the application's exclusively owned destination.
     failure : bool
         Fail synchronization after publication to verify recovery behavior.
+    stack : str or None
+        Stack selected explicitly, or None to retain the default.
     """
     destination = tmp_path / "application"
+    selected = Stack(stack) if stack is not None else DEFAULT_STACK
+    source = STACKS[selected]
     runner = Mock()
     runner.environ = {}
     prerequisites = Prerequisites(
@@ -368,6 +385,8 @@ def test_offline_cli_installation(tmp_path: Path, failure: bool) -> None:
         """
         output = ""
         if argv[1] == "clone":
+            assert argv[argv.index("--branch") + 1] == source.branch
+            assert argv[-2] == source.repository
             staging = Path(argv[-1])
             for name in ("config", "bootstrap", "database", ".git"):
                 (staging / name).mkdir()
@@ -375,7 +394,7 @@ def test_offline_cli_installation(tmp_path: Path, failure: bool) -> None:
                 (staging / name).write_text("", encoding="utf-8")
             (staging / "pyproject.toml").write_text(
                 '[project]\nname="template"\nrequires-python=">=3.14"\n'
-                'dependencies=["orionis>=0.805.0"]\n', encoding="utf-8",
+                'dependencies=["orionis>=0.932.0"]\n', encoding="utf-8",
             )
             (staging / ".env.example").write_text(
                 "APP_NAME=Template\nAPP_KEY=\nDB_CONNECTION=sqlite\n"
@@ -389,7 +408,7 @@ def test_offline_cli_installation(tmp_path: Path, failure: bool) -> None:
                 'default=Env.get("FILESYSTEM_DISK")\ndisks=Disks(local=None)\n', encoding="utf-8",
             )
         elif argv[1] == "symbolic-ref":
-            output = "refs/heads/blank_1.x"
+            output = f"refs/heads/{source.branch}"
         elif argv[1] == "rev-parse":
             output = "a" * 40
         elif argv[1] == "sync":
@@ -401,8 +420,8 @@ def test_offline_cli_installation(tmp_path: Path, failure: bool) -> None:
             (cwd / "uv.lock").touch()
         elif argv[-1] == METADATA_PROBE:
             output = json.dumps({
-                "python": "3.14.0", "version": "0.805.0", "prefix": str(cwd / ".venv"),
-                "extras": ["factories"], "requirements": [], "installed": {},
+                "python": "3.14.0", "version": "0.932.0", "prefix": str(cwd / ".venv"),
+                "extras": [], "requirements": [], "installed": {},
             })
         elif argv[-1] == CONFIG_PROBE:
             output = json.dumps({
@@ -419,17 +438,19 @@ def test_offline_cli_installation(tmp_path: Path, failure: bool) -> None:
     with patch("orionis_installer.cli.Runner", return_value=runner), patch(
         "orionis_installer.cli.check_prerequisites", return_value=prerequisites,
     ), patch(
-        "orionis_installer.ui.output.framework_version", return_value="0.805.0",
+        "orionis_installer.ui.output.framework_version", return_value="0.932.0",
     ):
         response = CliRunner().invoke(app, [
             "new", "offline-example", "--path", str(destination), "--no-interaction",
             "--no-color", "--git", "--no-migrate", "--no-open",
+            *(["--stack", stack.upper()] if stack is not None else []),
         ])
     assert response.exit_code == (1 if failure else 0), response.output
+    assert source.label in response.output
+    assert source.branch in response.output
     assert (destination / ".env").is_file()
     assert not list(tmp_path.glob(".*.orionis-*"))
     if failure:
         assert response.output.count("preserved") > 0
     else:
         assert response.output.count("Application ready") > 0
-

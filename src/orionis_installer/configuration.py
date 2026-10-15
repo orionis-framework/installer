@@ -338,25 +338,26 @@ def valid_sqlite_path(database: str) -> bool:
         and not any(ord(character) < 32 or ord(character) == 127 for character in database)
     )
 
-def _validate_sqlite_database(root: Path, database: str) -> None:
-    """Require a persistent SQLite file inside an existing application directory.
+def _prepare_sqlite_database(root: Path, database: str) -> None:
+    """Prepare the parent directory for a persistent application-local SQLite file.
 
     Parameters
     ----------
     root : Path
-        Application root containing the database directory.
+        Application root containing or receiving the database directory.
     database : str
         Decoded relative SQLite filename.
 
     Raises
     ------
     CompatibilityError
-        If the path is unsafe, names a directory, or has a missing parent.
+        If the path is unsafe or names a directory.
+    OSError
+        If the database's parent directory cannot be created.
     """
     if not valid_sqlite_path(database) or (root / database).is_dir():
         raise CompatibilityError(MESSAGES["sqlite_path_invalid"])
-    if not (root / database).parent.is_dir():
-        raise CompatibilityError(MESSAGES["sqlite_directory_missing"])
+    (root / database).parent.mkdir(parents=True, exist_ok=True)
 
 
 def configure_environment(root: Path, plan: InstallationPlan) -> None:
@@ -387,7 +388,7 @@ def configure_environment(root: Path, plan: InstallationPlan) -> None:
     _set_env_key(path, "FILESYSTEM_DISK", plan.active_storage.value)
     _set_env_key(path, "DB_CONNECTION", plan.active_database.value)
     if plan.active_database == Database.SQLITE:
-        _validate_sqlite_database(root, literal_value(values["DB_DATABASE"]))
+        _prepare_sqlite_database(root, literal_value(values["DB_DATABASE"]))
         # SQLite creates the file on first migration; never truncate one from the template.
     else:
         set_literal_env(path, "DB_HOST", literal_value(values.get("DB_HOST")) or "127.0.0.1")

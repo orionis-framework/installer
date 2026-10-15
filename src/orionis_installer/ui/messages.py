@@ -33,6 +33,7 @@ MESSAGES = {
     "yes": "Yes",
     "no": "No",
     "optional": "skipped",
+    "no_extras": "None",
     "next": "Next steps",
     "next_hint": "Start your application from its project directory.",
     "migration_pending": ("Migrations pending. Review the database connection, then run:"),
