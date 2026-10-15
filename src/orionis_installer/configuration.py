@@ -167,12 +167,12 @@ def environment_example(root: Path) -> Path:
 
 def config_contract(root: Path, plan: InstallationPlan) -> None:
     """
-    Verify selected drivers by inspecting downloaded configuration syntax.
+    Verify explicit driver overrides, allowing inherited framework defaults.
 
     Parameters
     ----------
     root : Path
-        Template directory containing storage and database configuration.
+        Template directory optionally containing storage and database overrides.
     plan : InstallationPlan
         Effective storage disk and database connection to verify.
 
@@ -185,8 +185,11 @@ def config_contract(root: Path, plan: InstallationPlan) -> None:
         ("filesystems.py", "FILESYSTEM_DISK", "Disks", plan.active_storage.value),
         ("database.py", "DB_CONNECTION", "Connections", plan.active_database.value),
     ):
+        path = root / "config" / filename
+        if not path.exists():
+            continue
         try:
-            tree = ast.parse((root / "config" / filename).read_text(encoding="utf-8"))
+            tree = ast.parse(path.read_text(encoding="utf-8"))
         except (SyntaxError, UnicodeError) as exc:
             raise CompatibilityError(MESSAGES["skeleton_configuration_unreadable"]) from exc
         keys = {
@@ -397,9 +400,11 @@ def configure_environment(root: Path, plan: InstallationPlan) -> None:
         _set_env_key(path, "DB_PORT", str(PORTS[plan.active_database]), quote_mode="never")
         if plan.active_database == Database.ORACLE:
             # Oracle uses a service/SID/DSN/TNS, not the shared DB_DATABASE string.
-            config = (root / "config" / "database.py").read_text(encoding="utf-8")
-            if '"DB_SERVICE_NAME"' not in config and "'DB_SERVICE_NAME'" not in config:
-                raise CompatibilityError(MESSAGES["oracle_service_unsupported"])
+            database_config = root / "config" / "database.py"
+            if database_config.exists():
+                config = database_config.read_text(encoding="utf-8")
+                if '"DB_SERVICE_NAME"' not in config and "'DB_SERVICE_NAME'" not in config:
+                    raise CompatibilityError(MESSAGES["oracle_service_unsupported"])
             set_literal_env(path, "DB_SERVICE_NAME", "configure-me")
         # DB_PASSWORD remains absent/commented. Do not manufacture credentials.
 

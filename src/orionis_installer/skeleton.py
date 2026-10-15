@@ -41,8 +41,6 @@ def validate_tree(root: Path, *, configured: bool = False) -> None:
         "pyproject.toml",
         "reactor",
         "bootstrap/app.py",
-        "config/database.py",
-        "config/filesystems.py",
         ".gitignore",
     )
     if any(not (root / name).is_file() for name in required):

@@ -30,8 +30,15 @@ print(json.dumps({'python':'.'.join(map(str,sys.version_info[:3])), 'prefix':sys
  'installed':{x.metadata['Name'].lower().replace('_','-'):x.version for x in m.distributions()}}))
 """
 CONFIG_PROBE = """import json
-from config.database import BootstrapDatabase
-from config.filesystems import BootstrapFilesystems
+from pathlib import Path
+if Path('config/database.py').is_file():
+    from config.database import BootstrapDatabase
+else:
+    from orionis.foundation.config.database import Database as BootstrapDatabase
+if Path('config/filesystems.py').is_file():
+    from config.filesystems import BootstrapFilesystems
+else:
+    from orionis.foundation.config.filesystems import Filesystems as BootstrapFilesystems
 from orionis.environment import Env
 d=BootstrapDatabase();s=BootstrapFilesystems()
 db=str(d.default);disk=str(s.default)

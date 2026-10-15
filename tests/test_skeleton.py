@@ -12,9 +12,10 @@ import tomlkit
 from packaging.requirements import Requirement
 
 from orionis_installer.configuration import (
-    configure_environment, configure_pyproject, ensure_gitignore, literal_value,
+    config_contract, configure_environment, configure_pyproject, ensure_gitignore, literal_value,
     orionis_requirement, read_env,
 )
+from orionis_installer.exceptions import CompatibilityError
 from orionis_installer.installer import (
     CONFIG_PROBE, Installer, probe_json, project_python, verify_configuration,
 )
@@ -177,11 +178,14 @@ def test_real_skeleton_structure(skeleton_root: Path) -> None:
     assert len(routing) == 1
     paths = {keyword.arg: keyword.value.value for keyword in routing[0].keywords
              if isinstance(keyword.value, ast.Constant)}
-    kinds = (
-        {"api", "websocket"} if skeleton_root.name == Stack.SLIM_API.value
-        else {"web", "api", "console", "websocket", "ai"}
-    )
+    if skeleton_root.name == Stack.SLIM_MCP.value:
+        kinds = {"ai"}
+    elif skeleton_root.name == Stack.SLIM_API.value:
+        kinds = {"api", "websocket"}
+    else:
+        kinds = {"web", "api", "console", "websocket", "ai"}
     assert set(paths) == kinds | {"health"}
+    assert paths["health"] == "/up"
     for kind in kinds:
         assert paths[kind] == f"routes/{kind}.py"
         assert (skeleton_root / paths[kind]).is_file()
@@ -250,3 +254,79 @@ def test_real_installation_and_sqlite_migrations(
                 )
                 configure_environment(plan.path, selected)
                 verify_configuration(probe_json(runner, python, plan.path, CONFIG_PROBE), selected)
+
+
+@pytest.mark.parametrize("storage,database", [
+    (Storage.LOCAL, Database.SQLITE),
+    (Storage.S3, Database.ORACLE),
+])
+def test_minimal_mcp_configuration(
+    tmp_path: Path, storage: Storage, database: Database,
+) -> None:
+    """Configure Slim MCP without distributed database or filesystem overrides.
+
+    Parameters
+    ----------
+    tmp_path : Path
+        Minimal MCP staging directory matching the official branch structure.
+    storage : Storage
+        Selected filesystem driver.
+    database : Database
+        Selected database connection.
+    """
+    for name in ("pyproject.toml", "reactor", "bootstrap/app.py", "config/app.py",
+                 "config/mcp.py", ".gitignore"):
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("", encoding="utf-8")
+    (tmp_path / ".env.example").write_text(
+        "APP_NAME=Orionis\nAPP_KEY=\nFILESYSTEM_DISK=local\n"
+        "DB_CONNECTION=sqlite\nDB_DATABASE=database/database.sqlite\n",
+        encoding="utf-8",
+    )
+    plan = InstallationPlan(
+        name="mcp-example", path=tmp_path, stack=Stack.SLIM_MCP,
+        storage=storage, database=database,
+    )
+
+    validate_tree(tmp_path)
+    configure_environment(tmp_path, plan)
+    ensure_gitignore(tmp_path)
+
+    values = read_env(tmp_path / ".env")
+    assert literal_value(values["APP_NAME"]) == plan.name
+    assert values["FILESYSTEM_DISK"] == storage.value
+    assert values["DB_CONNECTION"] == database.value
+    assert literal_value(values["DB_DATABASE"])
+    if database == Database.SQLITE:
+        assert (tmp_path / literal_value(values["DB_DATABASE"])).parent.is_dir()
+    else:
+        assert literal_value(values["DB_SERVICE_NAME"]) == "configure-me"
+    assert not (tmp_path / "config/database.py").exists()
+    assert not (tmp_path / "config/filesystems.py").exists()
+
+
+@pytest.mark.parametrize("filename", ["database.py", "filesystems.py"])
+@pytest.mark.parametrize("source", ["default = (", 'default = "unsupported"'])
+def test_existing_mcp_driver_overrides_are_validated(
+    tmp_path: Path, filename: str, source: str,
+) -> None:
+    """Reject broken explicit overrides instead of silently inheriting defaults.
+
+    Parameters
+    ----------
+    tmp_path : Path
+        Isolated application with one invalid configuration override.
+    filename : str
+        Optional database or filesystem override to validate.
+    source : str
+        Invalid syntax or configuration missing the selected driver contract.
+    """
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / filename).write_text(source, encoding="utf-8")
+    plan = InstallationPlan(name="mcp-example", path=tmp_path, stack=Stack.SLIM_MCP)
+
+    with pytest.raises(CompatibilityError):
+        config_contract(tmp_path, plan)
+
+
