@@ -7,28 +7,27 @@ import subprocess
 import sys
 import tomllib
 from pathlib import Path
-
 import pytest
 from typer.testing import CliRunner
-
 from orionis_installer import __version__
 from orionis_installer.cli import app
 from orionis_installer.exceptions import ValidationError
 from orionis_installer.models import STACKS, Database, InstallationPlan, Storage
 
-
 def test_ui_does_not_import_prompt_toolkit() -> None:
     """Keep prompt-toolkit unloaded when constructing noninteractive output."""
     source = (
-        'import sys; from io import StringIO; from orionis_installer.ui import UI; '
+        "import sys; from io import StringIO; from orionis_installer.ui import UI; "
         'ui = UI(file=StringIO()); assert "prompt_toolkit" not in sys.modules; '
         'assert ui.prompts is ui.prompts; assert "prompt_toolkit" in sys.modules'
     )
     result = subprocess.run(
-        [sys.executable, "-c", source], capture_output=True, text=True, check=False,
+        [sys.executable, "-c", source],
+        capture_output=True,
+        text=True,
+        check=False,
     )
     assert result.returncode == 0, result.stderr
-
 
 @pytest.mark.parametrize("arguments", [["--version"], ["new", "--help"]])
 def test_cli_dispatch(arguments: list[str]) -> None:
@@ -42,7 +41,6 @@ def test_cli_dispatch(arguments: list[str]) -> None:
     result = CliRunner().invoke(app, arguments)
     assert result.exit_code == 0, result.output
 
-
 def test_version_matches_project_metadata() -> None:
     """Keep the package and CLI versions aligned with the release manifest."""
     manifest_path = Path(__file__).resolve().parents[1] / "pyproject.toml"
@@ -53,7 +51,6 @@ def test_version_matches_project_metadata() -> None:
     result = CliRunner().invoke(app, ["--version"])
     assert result.exit_code == 0, result.output
     assert result.output.strip() == f"orionis-installer {version}"
-
 
 @pytest.mark.parametrize("shell_name", ["pwsh", "powershell"])
 def test_release_downloads_every_catalog_source(tmp_path: Path, shell_name: str) -> None:
@@ -117,8 +114,11 @@ ConvertTo-Json -InputObject $clones.ToArray() -Depth 3 -Compress
 """
     result = subprocess.run(
         [shell, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
-        capture_output=True, text=True, check=False,
-        env=os.environ | {
+        capture_output=True,
+        text=True,
+        check=False,
+        env=os.environ
+        | {
             "ORIONIS_TEST_PROJECT_ROOT": str(project),
             "ORIONIS_TEST_PYTHON": sys.executable,
             "ORIONIS_TEST_AUDIT_ROOT": str(tmp_path),
@@ -127,12 +127,18 @@ ConvertTo-Json -InputObject $clones.ToArray() -Depth 3 -Compress
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout) == [
         [
-            "clone", "--depth", "1", "--single-branch", "--branch", source.branch,
-            "--no-recurse-submodules", source.repository, str(tmp_path / stack.value),
+            "clone",
+            "--depth",
+            "1",
+            "--single-branch",
+            "--branch",
+            source.branch,
+            "--no-recurse-submodules",
+            source.repository,
+            str(tmp_path / stack.value),
         ]
         for stack, source in STACKS.items()
     ]
-
 
 @pytest.mark.parametrize("field", ["default_storage", "default_database"])
 def test_driver_defaults_reject_strings(tmp_path: Path, field: str) -> None:
@@ -147,6 +153,9 @@ def test_driver_defaults_reject_strings(tmp_path: Path, field: str) -> None:
     """
     with pytest.raises(ValidationError):
         InstallationPlan(
-            name="example", path=tmp_path, storage=Storage.ALL, database=Database.ALL,
+            name="example",
+            path=tmp_path,
+            storage=Storage.ALL,
+            database=Database.ALL,
             **{field: "invalid"},
         )

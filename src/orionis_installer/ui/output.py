@@ -1,13 +1,10 @@
-import json
 import os
+import sys
 import time
 from collections import Counter
-from http.client import HTTPException
 from pathlib import Path
 from types import TracebackType
 from typing import TextIO
-from urllib import request
-from packaging.version import Version
 from rich import box
 from rich.console import Console, Group
 from rich.live import Live
@@ -86,14 +83,44 @@ _LOGO_PIXELS = (
     "..................................................",
 )
 
-def _brand_logo() -> Text:
+
+def _compact_logo_pixels() -> tuple[str, ...]:
+    """Reduce the bitmap to two-by-two blocks and pad the final raster.
+
+    Returns
+    -------
+    tuple of str
+        Compact bitmap retaining the dominant color of each block.
+    """
+    pixels = _LOGO_PIXELS
+    reduced: list[str] = []
+    for row in range(0, len(pixels), 2):
+        cells: list[str] = []
+        for column in range(0, len(pixels[0]), 2):
+            block_colors = Counter(
+                pixels[row + dy][column + dx]
+                for dy in range(2)
+                for dx in range(2)
+                if pixels[row + dy][column + dx] != "."
+            )
+            cells.append(block_colors.most_common(1)[0][0] if block_colors else ".")
+        reduced.append("".join(cells) + ".")
+    return (*reduced, "." * 26, "." * 26)
+
+
+def _brand_logo(*, compact: bool = False) -> Text:
     """
     Render the official logo bitmap with eight subpixels per terminal cell.
+
+    Parameters
+    ----------
+    compact : bool, optional
+        Reduce the bitmap to seven terminal rows for the welcome screen.
 
     Returns
     -------
     Text
-        Fixed-size Unicode raster preserving the outline and three pointed stars.
+        Unicode raster retaining the outline and the three-color palette.
     """
     palette = {
         "B": "logo_outline",
@@ -101,17 +128,24 @@ def _brand_logo() -> Text:
         "C": "logo_spark",
     }
     dot_pixels = (
-        (0, 0, 0), (0, 1, 3), (1, 0, 1), (1, 1, 4),
-        (2, 0, 2), (2, 1, 5), (3, 0, 6), (3, 1, 7),
+        (0, 0, 0),
+        (0, 1, 3),
+        (1, 0, 1),
+        (1, 1, 4),
+        (2, 0, 2),
+        (2, 1, 5),
+        (3, 0, 6),
+        (3, 1, 7),
     )
+    pixels = _compact_logo_pixels() if compact else _LOGO_PIXELS
     lines: list[Text] = []
-    for row in range(0, len(_LOGO_PIXELS), 4):
+    for row in range(0, len(pixels), 4):
         line = Text()
-        for column in range(0, len(_LOGO_PIXELS[0]), 2):
+        for column in range(0, len(pixels[0]), 2):
             dots = 0
             colors: Counter[str] = Counter()
             for row_offset, column_offset, bit in dot_pixels:
-                color = _LOGO_PIXELS[row + row_offset][column + column_offset]
+                color = pixels[row + row_offset][column + column_offset]
                 if color != ".":
                     dots |= 1 << bit
                     colors[color] += 1
@@ -123,21 +157,6 @@ def _brand_logo() -> Text:
         lines.append(line)
     return Text("\n").join(lines)
 
-def framework_version() -> str | None:
-    """
-    Read the latest Orionis release from PyPI while tolerating unavailable metadata.
-
-    Returns
-    -------
-    str or None
-        Published framework version, or ``None`` if the request or metadata is invalid.
-    """
-    try:
-        with request.urlopen("https://pypi.org/pypi/orionis/json", timeout=2) as response:
-            metadata = json.load(response)
-        return str(Version(metadata["info"]["version"]))
-    except (OSError, HTTPException, ValueError, KeyError, TypeError):
-        return None
 
 class Output:
     """Present plans, progress, diagnostics, and executable next steps."""
@@ -162,11 +181,15 @@ class Output:
         None
             Store the configured Rich console.
         """
+        monochrome = no_color or "NO_COLOR" in os.environ
+        stream = file if file is not None else sys.stdout
         self.console = Console(
             file=file,
             width=width,
             theme=THEME,
-            no_color=no_color or "NO_COLOR" in os.environ,
+            no_color=monochrome,
+            color_system=None if monochrome else "auto",
+            force_terminal=None if stream.isatty() else False,
             markup=False,
             highlight=False,
         )
@@ -262,22 +285,19 @@ class Output:
         Returns
         -------
         None
-            Display the brand, runtime labels, and framework and installer versions.
+            Display the brand, installer version, and required runtime without network access.
         """
         identity = Text("ORIONIS", style="heading")
-        identity.append("  /  INSTALLER", style="muted")
-        identity.append("\n" + MESSAGES["tagline"], style="orionis")
+        identity.append("\nAPPLICATION INSTALLER", style="accent")
+        identity.append("\n" + MESSAGES["tagline"], style="muted")
         separator = " | " if self.console.options.ascii_only else " · "
-        version = framework_version()
-        identity.append("\n\nFramework ", style="muted")
-        identity.append("v" + version if version else "unavailable", style="accent")
-        identity.append(separator + "Installer ", style="muted")
+        identity.append("\n\nInstaller ", style="muted")
         identity.append("v" + __version__, style="accent")
         identity.append("\nPython 3.14" + separator + "uv", style="muted")
         if self.panel_width >= 70 and not self.console.options.ascii_only:
-            logo = _brand_logo()
+            logo = _brand_logo(compact=True)
             layout = Table.grid(padding=(0, 3))
-            layout.add_column(width=len(_LOGO_PIXELS[0]) // 2)
+            layout.add_column(width=13)
             layout.add_column(ratio=1, vertical="middle")
             layout.add_row(logo, identity)
             content: Text | Table = layout
@@ -287,7 +307,7 @@ class Output:
         self.console.print(
             Panel(
                 content,
-                border_style="border",
+                border_style="logo_outline",
                 box=box.ROUNDED,
                 padding=(1, 2) if self.panel_width >= 54 else (0, 1),
                 width=self.panel_width,
@@ -347,7 +367,6 @@ class Output:
             MESSAGES["default_database"]: LABELS["database"],
             MESSAGES["git"]: LABELS["git"],
             MESSAGES["migrate"]: LABELS["migrations"],
-            MESSAGES["open"]: LABELS["editor"],
         }
         line = Text("  + ", style="success")
         line.append(terminal_text(short_labels.get(label, label)) + "  ", style="muted")
@@ -476,12 +495,14 @@ class Output:
             ("python", "3.14.x"),
         ]
         services: list[tuple[str, object]] = [
-            ("drivers_storage", dict(STORAGE_CHOICES)[plan.storage.value]),
             ("storage", dict(STORAGE_CHOICES)[plan.active_storage.value]),
-            ("drivers_database", dict(DATABASE_CHOICES)[plan.database.value]),
             ("database", dict(DATABASE_CHOICES)[plan.active_database.value]),
-            ("extras", ",".join(plan.extras) or MESSAGES["no_extras"]),
+            ("extras", ", ".join(plan.extras) or MESSAGES["no_extras"]),
         ]
+        if plan.storage != plan.active_storage:
+            services.insert(1, ("drivers_storage", dict(STORAGE_CHOICES)[plan.storage.value]))
+        if plan.database != plan.active_database:
+            services.insert(-1, ("drivers_database", dict(DATABASE_CHOICES)[plan.database.value]))
         if self.panel_width >= 92:
             columns = Table.grid(expand=True, padding=(0, 4))
             columns.add_column(ratio=1)
@@ -520,7 +541,7 @@ class Output:
         )
         self._path(plan.path)
 
-    def final(self, result: InstallationResult) -> None: # NOSONAR
+    def final(self, result: InstallationResult) -> None:  # NOSONAR
         """
         Display installation outcomes, warnings, and available next steps.
 
@@ -556,7 +577,6 @@ class Output:
             ),
             ("git", state_text(result.git)),
             ("migrations", state_text(result.migrations)),
-            ("editor", state_text(result.editor)),
         ]
         if self.panel_width >= 92:
             columns = Table.grid(expand=True, padding=(0, 4))
@@ -597,11 +617,52 @@ class Output:
         if result.published:
             self.section(MESSAGES["next"], MESSAGES["next_hint"])
             self._command("cd " + quote_directory(result.plan.path))
-            self._command("uv run python -B reactor serve")
-            if result.migrations != State.COMPLETED:
+            self._nextSteps(result)
+
+    def _nextSteps(self, result: InstallationResult) -> None:
+        """
+        Print ordered recovery, migration, and stack-specific launch commands.
+
+        Parameters
+        ----------
+        result : InstallationResult
+            Published project's verified creation and migration states.
+
+        Returns
+        -------
+        None
+            Display preparation before launch and explain separate worker processes.
+        """
+        from orionis_installer.post_install import migration_commands
+
+        if result.creation != State.COMPLETED:
+            self.message(MESSAGES["recovery_hint"])
+            self._command("uv sync --python 3.14")
+            self._command("uv run python -B reactor key:generate")
+            return
+        if result.migrations != State.COMPLETED:
+            commands = migration_commands(result)
+            if commands:
                 self.console.print()
                 self.warning(MESSAGES["migration_pending"])
-                self._command("uv run python -B reactor migrate")
+                for command in commands:
+                    self._command("uv run python -B reactor " + command)
+                self.console.print()
+        stack = result.plan.stack.value
+        if stack == "slim_worker":
+            self._command("uv run python -B reactor queue:work")
+            self.console.print()
+            self.message(MESSAGES["worker_hint"])
+            self._command("uv run python -B reactor schedule:work")
+        elif stack == "blank":
+            self.message(MESSAGES["blank_hint"])
+            self._command("uv run python -B reactor list")
+        else:
+            self._command("uv run python -B reactor serve")
+        if stack == "slim_mcp":
+            self.console.print()
+            self.message(MESSAGES["mcp_hint"])
+            self.console.print(Text(MESSAGES["mcp_inspector"], style="accent"))
 
     def progress(self) -> InstallationProgress:
         """
@@ -643,6 +704,8 @@ class InstallationProgress:
         self.current = -1
         self.detail = ""
         self.started = 0.0
+        self.stage_started = 0.0
+        self.durations = [0.0] * len(self.labels)
         self.live: Live | None = None
         self.spinner = Spinner("dots", style="accent")
 
@@ -685,8 +748,10 @@ class InstallationProgress:
         """
         if self.current >= 0:
             self.states[self.current] = State.COMPLETED
+            self.durations[self.current] = time.monotonic() - self.stage_started
         self.current = min(self.current + 1, len(self.labels) - 1)
         self.states[self.current] = State.RUNNING
+        self.stage_started = time.monotonic()
         self.detail = terminal_text(message)
         if self.live is not None:
             self.live.refresh()
@@ -695,6 +760,48 @@ class InstallationProgress:
             line.append(self.labels[self.current] + "  ", style="heading")
             line.append(self.detail, style="muted")
             self.output.console.print(line)
+
+    def _row(self, table: Table, index: int, label: str, state: State, *, compact: bool) -> None:
+        """Add the stage caption and optional status and timing cells.
+
+        Parameters
+        ----------
+        table : Table
+            Timeline grid configured for the selected terminal layout.
+        index : int
+            Stage position used for its number and recorded duration.
+        label : str
+            Stage description displayed in the timeline.
+        state : State
+            Current stage status.
+        compact : bool
+            Omit separate indicator and timing columns on narrow terminals.
+
+        Returns
+        -------
+        None
+            Append one row matching the timeline's selected layout.
+        """
+        marker, style = _STATES[state]
+        caption = Text(f"{index + 1:02d} {label}", style=style, overflow="fold")
+        if compact:
+            caption.append("  " + state.value, style=style)
+            table.add_row(caption)
+            return
+        indicator: Text | Spinner = (
+            self.spinner
+            if state == State.RUNNING and not self.output.console.options.ascii_only
+            else Text(marker, style=style)
+        )
+        duration = (
+            time.monotonic() - self.stage_started
+            if state == State.RUNNING
+            else self.durations[index]
+        )
+        timing = f"{max(0, duration):.1f}s" if state != State.PENDING else ""
+        table.add_row(
+            indicator, caption, Text(state.value, style=style), Text(timing, style="muted")
+        )
 
     def __rich__(self) -> Panel:
         """
@@ -711,23 +818,19 @@ class InstallationProgress:
         if not compact:
             table.add_column(ratio=1)
             table.add_column()
+            table.add_column(justify="right")
         for index, (label, state) in enumerate(zip(self.labels, self.states, strict=True)):
-            marker, style = _STATES[state]
-            indicator: Text | Spinner = (
-                self.spinner
-                if state == State.RUNNING and not self.output.console.options.ascii_only
-                else Text(marker, style=style)
-            )
-            caption = Text(f"{index + 1:02d} {label}", style=style, overflow="fold")
-            if compact:
-                caption.append("  " + state.value, style=style)
-                table.add_row(caption)
-            else:
-                table.add_row(indicator, caption, state_text(state))
+            self._row(table, index, label, state, compact=compact)
         elapsed = max(0, int(time.monotonic() - self.started))
         footer = Text(self.detail, style="muted", overflow="fold")
+        completed = self.states.count(State.COMPLETED)
+        track = Text("[", style="border")
+        for state in self.states:
+            marker, style = _STATES[state]
+            track.append("=" if state == State.COMPLETED else marker, style=style)
+        track.append(f"]  {completed}/{len(self.labels)} stages complete", style="muted")
         return Panel(
-            Group(table, Text(""), footer),
+            Group(track, Text(""), table, Text(""), footer),
             title=Text(MESSAGES["progress_title"], style="orionis"),
             subtitle=Text(f"{elapsed // 60:02d}:{elapsed % 60:02d} elapsed", style="muted"),
             title_align="left",
@@ -763,6 +866,7 @@ class InstallationProgress:
             Leave any exception raised by the context body unsuppressed.
         """
         if self.current >= 0:
+            self.durations[self.current] = time.monotonic() - self.stage_started
             if exception_type is None:
                 current_state = State.COMPLETED
             elif isinstance(exception, (Cancelled, KeyboardInterrupt, EOFError)):
@@ -778,9 +882,8 @@ class InstallationProgress:
             self.live.refresh()
             self.live.stop()
         elif self.current >= 0:
-            self.output.console.print(
-                Text("  " + self.detail, style=_STATES[self.states[self.current]][1])
-            )
+            self.output.console.print(self)
+
 
 def state_text(state: State) -> Text:
     """
@@ -798,6 +901,7 @@ def state_text(state: State) -> Text:
     """
     marker, style = _STATES[state]
     return Text(marker + " " + state.value, style=style)
+
 
 def quote_directory(path: Path) -> str:
     """

@@ -3,24 +3,39 @@
 import ast
 import os
 import shutil
+import sqlite3
 import subprocess
 import sys
+from contextlib import closing
 from pathlib import Path
-
 import pytest
 import tomlkit
 from packaging.requirements import Requirement
-
 from orionis_installer.configuration import (
-    config_contract, configure_environment, configure_pyproject, ensure_gitignore, literal_value,
-    orionis_requirement, read_env,
+    config_contract,
+    configure_environment,
+    configure_pyproject,
+    ensure_gitignore,
+    literal_value,
+    orionis_requirement,
+    read_env,
 )
 from orionis_installer.exceptions import CompatibilityError
 from orionis_installer.installer import (
-    CONFIG_PROBE, Installer, probe_json, project_python, verify_configuration,
+    CONFIG_PROBE,
+    Installer,
+    probe_json,
+    project_python,
+    verify_configuration,
 )
 from orionis_installer.models import (
-    STACKS, Database, InstallationPlan, PostInstallOptions, Stack, State, Storage,
+    STACKS,
+    Database,
+    InstallationPlan,
+    PostInstallOptions,
+    Stack,
+    State,
+    Storage,
 )
 from orionis_installer.post_install import connection_ready, connection_values, run_post_install
 from orionis_installer.prerequisites import check_prerequisites
@@ -34,7 +49,6 @@ STORAGE_SELECTIONS = [(value, None) for value in Storage] + [
 DATABASE_SELECTIONS = [(value, None) for value in Database] + [
     (Database.ALL, value) for value in Database if value != Database.ALL
 ]
-
 
 @pytest.fixture(scope="session")
 def skeleton_roots() -> dict[Stack, Path]:
@@ -51,7 +65,8 @@ def skeleton_roots() -> dict[Stack, Path]:
     paths = {stack: Path(root) / stack.value for stack in STACKS}
     missing = [
         f"{stack.value} ({STACKS[stack].branch})"
-        for stack, path in paths.items() if not path.is_dir()
+        for stack, path in paths.items()
+        if not path.is_dir()
     ]
     if missing:
         pytest.exit(
@@ -60,7 +75,6 @@ def skeleton_roots() -> dict[Stack, Path]:
             returncode=2,
         )
     return paths
-
 
 @pytest.fixture(params=list(Stack), scope="session")
 def skeleton_root(request: pytest.FixtureRequest, skeleton_roots: dict[Stack, Path]) -> Path:
@@ -80,7 +94,6 @@ def skeleton_root(request: pytest.FixtureRequest, skeleton_roots: dict[Stack, Pa
     """
     return skeleton_roots[request.param]
 
-
 def test_incomplete_skeleton_audit_fails_once(tmp_path: Path) -> None:
     """Report missing branches once instead of repeating every matrix setup error.
 
@@ -93,25 +106,35 @@ def test_incomplete_skeleton_audit_fails_once(tmp_path: Path) -> None:
     (tmp_path / Stack.SSR.value).mkdir()
     result = subprocess.run(
         [
-            sys.executable, "-m", "pytest",
+            sys.executable,
+            "-m",
+            "pytest",
             f"{Path(__file__).resolve()}::test_real_skeleton_structure",
-            "-q", "-p", "no:cacheprovider",
+            "-q",
+            "-p",
+            "no:cacheprovider",
         ],
-        capture_output=True, text=True, check=False,
+        capture_output=True,
+        text=True,
+        check=False,
         env=os.environ | {"ORIONIS_SKELETON_AUDIT": str(tmp_path), "PYTEST_ADDOPTS": ""},
     )
     output = result.stdout + result.stderr
     assert result.returncode == 2, output
-    assert "slim_api (slim_api_1.x)" in output
-    assert "slim_mcp (slim_mcp_1.x)" in output
+    for stack, source in STACKS.items():
+        if stack not in {Stack.BLANK, Stack.SSR}:
+            assert f"{stack.value} ({source.branch})" in output
     assert "ERROR at setup" not in output
-
 
 @pytest.mark.parametrize("storage,default_storage", STORAGE_SELECTIONS)
 @pytest.mark.parametrize("database,default_database", DATABASE_SELECTIONS)
 def test_real_environment_matrix(
-    skeleton_root: Path, tmp_path: Path, storage: Storage, default_storage: Storage | None,
-    database: Database, default_database: Database | None,
+    skeleton_root: Path,
+    tmp_path: Path,
+    storage: Storage,
+    default_storage: Storage | None,
+    database: Database,
+    default_database: Database | None,
 ) -> None:
     """Generate each menu combination from every real minimal environment file.
 
@@ -133,15 +156,19 @@ def test_real_environment_matrix(
     shutil.copytree(skeleton_root / "config", tmp_path / "config")
     if (skeleton_root / "database").is_dir():
         (tmp_path / "database").mkdir()
-    for name in ("pyproject.toml", ".env.example", ".gitignore"):
+    for name in ("pyproject.toml", ".env.example", ".env.reference", ".gitignore"):
         shutil.copyfile(skeleton_root / name, tmp_path / name)
-    original = (tmp_path / ".env.example").read_bytes()
+    reference = (tmp_path / ".env.reference").read_bytes()
     original_requirement = orionis_requirement(
         tomlkit.parse((tmp_path / "pyproject.toml").read_text(encoding="utf-8")),
     )
     plan = InstallationPlan(
-        name="matrix-example", path=tmp_path, storage=storage, database=database,
-        default_storage=default_storage, default_database=default_database,
+        name="matrix-example",
+        path=tmp_path,
+        storage=storage,
+        database=database,
+        default_storage=default_storage,
+        default_database=default_database,
         stack=Stack(skeleton_root.name),
     )
     requirement = configure_pyproject(tmp_path, plan)
@@ -154,12 +181,12 @@ def test_real_environment_matrix(
     assert requirement.extras.issuperset(plan.extras)
     assert Requirement(str(requirement)).specifier == original_requirement.specifier
     assert requirement.marker == original_requirement.marker
-    assert (tmp_path / ".env.example").read_bytes() == original
+    assert not (tmp_path / ".env.example").exists()
+    assert (tmp_path / ".env.reference").read_bytes() == reference
     assert values.get("DB_PASSWORD") is None
     ready = connection_ready(connection_values(tmp_path))
     assert ready == (plan.active_database == Database.SQLITE)
     assert (tmp_path / ".gitignore").read_text(encoding="utf-8").endswith("!uv.lock\n")
-
 
 def test_real_skeleton_structure(skeleton_root: Path) -> None:
     """Check every Python file's syntax and the separated route bootstrap contract.
@@ -173,29 +200,45 @@ def test_real_skeleton_structure(skeleton_root: Path) -> None:
     for path in skeleton_root.rglob("*.py"):
         ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     tree = ast.parse((skeleton_root / "bootstrap" / "app.py").read_text(encoding="utf-8"))
-    routing = [node for node in ast.walk(tree) if isinstance(node, ast.Call)
-               and isinstance(node.func, ast.Attribute) and node.func.attr == "withRouting"]
+    routing = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "withRouting"
+    ]
     assert len(routing) == 1
-    paths = {keyword.arg: keyword.value.value for keyword in routing[0].keywords
-             if isinstance(keyword.value, ast.Constant)}
-    if skeleton_root.name == Stack.SLIM_MCP.value:
-        kinds = {"ai"}
-    elif skeleton_root.name == Stack.SLIM_API.value:
-        kinds = {"api", "websocket"}
+    paths = {
+        keyword.arg: keyword.value.value
+        for keyword in routing[0].keywords
+        if isinstance(keyword.value, ast.Constant)
+    }
+    kinds = {
+        Stack.MASTER: {"web", "api", "console", "websocket", "ai"},
+        Stack.BLANK: {"web", "api", "console", "websocket", "ai"},
+        Stack.SSR: {"web", "console"},
+        Stack.SLIM_API: {"api"},
+        Stack.SLIM_MCP: {"ai"},
+        Stack.SLIM_WORKER: {"console"},
+        Stack.SLIM_REALTIME: {"websocket"},
+    }[Stack(skeleton_root.name)]
+    if skeleton_root.name == Stack.SLIM_WORKER.value:
+        assert set(paths) == kinds
     else:
-        kinds = {"web", "api", "console", "websocket", "ai"}
-    assert set(paths) == kinds | {"health"}
-    assert paths["health"] == "/up"
+        assert set(paths) == kinds | {"health"}
+        assert paths["health"] == "/up"
     for kind in kinds:
         assert paths[kind] == f"routes/{kind}.py"
         assert (skeleton_root / paths[kind]).is_file()
-
 
 @pytest.mark.smoke
 @pytest.mark.parametrize("stack", list(Stack))
 @pytest.mark.parametrize("all_drivers", [False, True])
 def test_real_installation_and_sqlite_migrations(
-    stack: Stack, all_drivers: bool, tmp_path: Path,
+    stack: Stack,
+    all_drivers: bool,
+    tmp_path: Path,
+    skeleton_roots: dict[Stack, Path],
 ) -> None:
     """Install each official stack and migrate only its disposable SQLite database.
 
@@ -207,39 +250,79 @@ def test_real_installation_and_sqlite_migrations(
         Install every SDK and probe each concrete database and storage combination.
     tmp_path : Path
         Disposable parent containing the new application and its SQLite database.
+    skeleton_roots : dict[Stack, Path]
+        Read-only branch checkouts supplying pristine minimal environment examples.
     """
     if os.environ.get("ORIONIS_REAL_SMOKE") != "1":
         pytest.skip("Set ORIONIS_REAL_SMOKE=1 to allow real uv/network installation")
     runner = Runner()
     prerequisites = check_prerequisites(runner, cwd=tmp_path)
     plan = InstallationPlan(
-        name="smoke-example", path=tmp_path / "application", stack=stack,
+        name="smoke-example",
+        path=tmp_path / "application",
+        stack=stack,
         storage=Storage.ALL if all_drivers else Storage.LOCAL,
         database=Database.ALL if all_drivers else Database.SQLITE,
     )
     result = Installer(plan, prerequisites, runner).install()
     run_post_install(
-        result, PostInstallOptions(git=True, migrate=True, open=False), prerequisites,
-        runner, UI(no_color=True), no_interaction=True,
+        result,
+        PostInstallOptions(git=True, migrate=True),
+        prerequisites,
+        runner,
+        UI(no_color=True),
+        no_interaction=True,
     )
     assert result.creation == State.COMPLETED
-    assert result.migrations == State.COMPLETED, result.warnings
+    expected_migrations = State.SKIPPED if stack == Stack.SLIM_REALTIME else State.COMPLETED
+    assert result.migrations == expected_migrations, result.warnings
     assert result.git == State.COMPLETED
     assert result.exit_code == 0
     values = read_env(plan.path / ".env")
     assert values["APP_KEY"]
-    assert (plan.path / literal_value(values["DB_DATABASE"])).is_file()
+    assert not (plan.path / ".env.example").exists()
+    assert (plan.path / ".env.reference").is_file()
+    if stack != Stack.SLIM_REALTIME:
+        database_path = plan.path / literal_value(values["DB_DATABASE"])
+        assert database_path.is_file()
+        with closing(sqlite3.connect(database_path.as_uri() + "?mode=ro", uri=True)) as database:
+            tables = {
+                row[0]
+                for row in database.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'",
+                )
+            }
+            assert "migrations" in tables
+            if stack in {Stack.MASTER, Stack.SSR}:
+                assert {
+                    "users",
+                    "permissions",
+                    "roles",
+                    "model_has_permissions",
+                    "model_has_roles",
+                    "role_has_permissions",
+                    "personal_access_tokens",
+                    "password_reset_tokens",
+                }.issubset(tables)
+                for table in ("users", "permissions", "roles"):
+                    assert database.execute(f"SELECT COUNT(*) FROM {table}").fetchone() == (0,)
+            if stack == Stack.SLIM_WORKER:
+                assert {"jobs", "failed_jobs"}.issubset(tables)
     ignored = runner.run(
         [prerequisites.git, "check-ignore", "--no-index", ".env", ".venv/", "uv.lock"],
         cwd=plan.path,
     ).stdout.splitlines()
     assert set(ignored) == {".env", ".venv/"}
     revision = subprocess.run(
-        [str(prerequisites.git), "rev-parse", "--is-inside-work-tree"], cwd=plan.path,
-        capture_output=True, text=True, check=True,
+        [str(prerequisites.git), "rev-parse", "--is-inside-work-tree"],
+        cwd=plan.path,
+        capture_output=True,
+        text=True,
+        check=True,
     )
     assert revision.stdout.strip() == "true"
     if all_drivers:
+        example = (skeleton_roots[stack] / ".env.example").read_bytes()
         python = project_python(plan.path)
         for storage in Storage:
             if storage == Storage.ALL:
@@ -248,20 +331,30 @@ def test_real_installation_and_sqlite_migrations(
                 if database == Database.ALL:
                     continue
                 selected = InstallationPlan(
-                    name=plan.name, path=plan.path, stack=stack,
-                    storage=Storage.ALL, database=Database.ALL,
-                    default_storage=storage, default_database=database,
+                    name=plan.name,
+                    path=plan.path,
+                    stack=stack,
+                    storage=Storage.ALL,
+                    database=Database.ALL,
+                    default_storage=storage,
+                    default_database=database,
                 )
+                (plan.path / ".env.example").write_bytes(example)
                 configure_environment(plan.path, selected)
+                assert not (plan.path / ".env.example").exists()
                 verify_configuration(probe_json(runner, python, plan.path, CONFIG_PROBE), selected)
 
-
-@pytest.mark.parametrize("storage,database", [
-    (Storage.LOCAL, Database.SQLITE),
-    (Storage.S3, Database.ORACLE),
-])
+@pytest.mark.parametrize(
+    "storage,database",
+    [
+        (Storage.LOCAL, Database.SQLITE),
+        (Storage.S3, Database.ORACLE),
+    ],
+)
 def test_minimal_mcp_configuration(
-    tmp_path: Path, storage: Storage, database: Database,
+    tmp_path: Path,
+    storage: Storage,
+    database: Database,
 ) -> None:
     """Configure Slim MCP without distributed database or filesystem overrides.
 
@@ -274,8 +367,14 @@ def test_minimal_mcp_configuration(
     database : Database
         Selected database connection.
     """
-    for name in ("pyproject.toml", "reactor", "bootstrap/app.py", "config/app.py",
-                 "config/mcp.py", ".gitignore"):
+    for name in (
+        "pyproject.toml",
+        "reactor",
+        "bootstrap/app.py",
+        "config/app.py",
+        "config/mcp.py",
+        ".gitignore",
+    ):
         path = tmp_path / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("", encoding="utf-8")
@@ -285,8 +384,11 @@ def test_minimal_mcp_configuration(
         encoding="utf-8",
     )
     plan = InstallationPlan(
-        name="mcp-example", path=tmp_path, stack=Stack.SLIM_MCP,
-        storage=storage, database=database,
+        name="mcp-example",
+        path=tmp_path,
+        stack=Stack.SLIM_MCP,
+        storage=storage,
+        database=database,
     )
 
     validate_tree(tmp_path)
@@ -305,11 +407,12 @@ def test_minimal_mcp_configuration(
     assert not (tmp_path / "config/database.py").exists()
     assert not (tmp_path / "config/filesystems.py").exists()
 
-
 @pytest.mark.parametrize("filename", ["database.py", "filesystems.py"])
 @pytest.mark.parametrize("source", ["default = (", 'default = "unsupported"'])
 def test_existing_mcp_driver_overrides_are_validated(
-    tmp_path: Path, filename: str, source: str,
+    tmp_path: Path,
+    filename: str,
+    source: str,
 ) -> None:
     """Reject broken explicit overrides instead of silently inheriting defaults.
 
@@ -328,5 +431,3 @@ def test_existing_mcp_driver_overrides_are_validated(
 
     with pytest.raises(CompatibilityError):
         config_contract(tmp_path, plan)
-
-

@@ -60,7 +60,7 @@ def verify_python(runner: Runner, interpreter: Path, *, cwd: Path) -> str:
         raise PrerequisiteError(MESSAGES["python_stable_required"])
     return ".".join(str(part) for part in version[:3])
 
-def check_prerequisites( # NOSONAR
+def check_prerequisites(  # NOSONAR
     runner: Runner,
     *,
     cwd: Path,

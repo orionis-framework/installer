@@ -3,18 +3,16 @@
 from pathlib import Path
 from subprocess import CompletedProcess
 from unittest.mock import Mock, patch
-
 import pytest
 from packaging.requirements import Requirement
-
 from orionis_installer.exceptions import CompatibilityError
 from orionis_installer.installer import probe_json, verify_configuration, verify_metadata
 from orionis_installer.models import Database, InstallationPlan, Storage
 
-
 @pytest.mark.parametrize("installed", [{"faker": "40.40.0"}, {}])
 def test_core_metadata_without_optional_drivers(
-    tmp_path: Path, installed: dict[str, str],
+    tmp_path: Path,
+    installed: dict[str, str],
 ) -> None:
     """Verify Faker as a core dependency without requesting a factories extra.
 
@@ -28,10 +26,23 @@ def test_core_metadata_without_optional_drivers(
     plan = InstallationPlan(name="example", path=tmp_path)
     assert plan.extras == ()
     data = {
-        "python": "3.14.0", "prefix": str(tmp_path / ".venv"), "version": "0.932.0",
-        "extras": ["s3", "azure", "gcs", "storage", "mysql", "pgsql", "oracle",
-                   "sqlserver", "redshift", "database"],
-        "requirements": ["faker>=40.40.0,<41.0"], "installed": installed,
+        "python": "3.14.0",
+        "prefix": str(tmp_path / ".venv"),
+        "version": "0.932.0",
+        "extras": [
+            "s3",
+            "azure",
+            "gcs",
+            "storage",
+            "mysql",
+            "pgsql",
+            "oracle",
+            "sqlserver",
+            "redshift",
+            "database",
+        ],
+        "requirements": ["faker>=40.40.0,<41.0"],
+        "installed": installed,
     }
     requirement = Requirement("orionis>=0.932.0")
     if installed:
@@ -39,7 +50,6 @@ def test_core_metadata_without_optional_drivers(
     else:
         with pytest.raises(CompatibilityError):
             verify_metadata(data, plan, requirement)
-
 
 @pytest.mark.parametrize("installed", [{"core": "1.2", "driver": "2"}, {"core": "0.1"}])
 def test_metadata_parses_requirements_once(tmp_path: Path, installed: dict[str, str]) -> None:
@@ -56,8 +66,12 @@ def test_metadata_parses_requirements_once(tmp_path: Path, installed: dict[str, 
     requirement = Requirement("orionis[mysql]>=1")
     requirements = ["core>=1", "driver>=2; extra == 'mysql'", "absent; extra == 's3'"]
     data = {
-        "python": "3.14.0", "prefix": str(tmp_path / ".venv"), "version": "1.0",
-        "extras": ["mysql"], "requirements": requirements, "installed": installed,
+        "python": "3.14.0",
+        "prefix": str(tmp_path / ".venv"),
+        "version": "1.0",
+        "extras": ["mysql"],
+        "requirements": requirements,
+        "installed": installed,
     }
     with patch("orionis_installer.installer.Requirement", wraps=Requirement) as parser:
         if "driver" in installed:
@@ -66,7 +80,6 @@ def test_metadata_parses_requirements_once(tmp_path: Path, installed: dict[str, 
             with pytest.raises(CompatibilityError):
                 verify_metadata(data, plan, requirement)
         assert parser.call_count == len(requirements)
-
 
 @pytest.mark.parametrize("output", ["[]", "null", "42", "", "not-json"])
 def test_probe_rejects_non_mapping(output: str, tmp_path: Path) -> None:
@@ -84,7 +97,6 @@ def test_probe_rejects_non_mapping(output: str, tmp_path: Path) -> None:
     with pytest.raises(CompatibilityError):
         probe_json(runner, tmp_path / "python", tmp_path, "pass")
 
-
 @pytest.mark.parametrize("driver", ["aws", "s3", "azure"])
 def test_s3_uses_framework_driver_name(tmp_path: Path, driver: str) -> None:
     """Match the S3 disk to its actual AWS driver rather than its menu identifier.
@@ -98,15 +110,17 @@ def test_s3_uses_framework_driver_name(tmp_path: Path, driver: str) -> None:
     """
     plan = InstallationPlan(name="example", path=tmp_path, storage=Storage.S3)
     data = {
-        "name": plan.name, "database": "sqlite", "driver": "sqlite",
-        "storage": "s3", "storage_driver": driver,
+        "name": plan.name,
+        "database": "sqlite",
+        "driver": "sqlite",
+        "storage": "s3",
+        "storage_driver": driver,
     }
     if driver == "aws":
         verify_configuration(data, plan)
     else:
         with pytest.raises(CompatibilityError):
             verify_configuration(data, plan)
-
 
 @pytest.mark.parametrize("complete", [True, False])
 def test_aggregate_preserves_driver_requirements(tmp_path: Path, complete: bool) -> None:
@@ -124,7 +138,9 @@ def test_aggregate_preserves_driver_requirements(tmp_path: Path, complete: bool)
     if complete:
         marker += " or extra == 'database'"
     data = {
-        "python": "3.14.0", "prefix": str(tmp_path / ".venv"), "version": "1.0",
+        "python": "3.14.0",
+        "prefix": str(tmp_path / ".venv"),
+        "version": "1.0",
         "extras": ["database", "mysql", "pgsql", "oracle", "sqlserver", "redshift"],
         "requirements": ["core>=1", f"mysql-driver>=2; {marker}"],
         "installed": {"core": "1", "mysql-driver": "2"},
@@ -135,4 +151,3 @@ def test_aggregate_preserves_driver_requirements(tmp_path: Path, complete: bool)
     else:
         with pytest.raises(CompatibilityError):
             verify_metadata(data, plan, requirement)
-

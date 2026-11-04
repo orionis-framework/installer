@@ -2,6 +2,7 @@ import os
 import shutil
 import stat
 import tempfile
+import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -14,6 +15,27 @@ from orionis_installer.exceptions import (
 from orionis_installer.messages import MESSAGES
 from orionis_installer.models import DEFAULT_STACK, STACKS, SkeletonSource
 from orionis_installer.validation import is_redirect, validate_destination
+
+WINDOWS_LOCK_ATTEMPTS = 5
+
+def wait_for_windows_lock(error: PermissionError, attempt: int) -> None:
+    """Wait before retrying a native Windows lock or re-raise a persistent error.
+
+    Parameters
+    ----------
+    error : PermissionError
+        Failed operation's native access, sharing or lock violation.
+    attempt : int
+        Zero-based index of the failed attempt within the shared retry budget.
+
+    Raises
+    ------
+    PermissionError
+        If the error is unrelated to Windows locks or the retry budget is exhausted.
+    """
+    if getattr(error, "winerror", None) not in {5, 32, 33} or attempt >= WINDOWS_LOCK_ATTEMPTS - 1:
+        raise error
+    time.sleep(0.1 * 2**attempt)
 
 def validate_tree(root: Path, *, configured: bool = False) -> None:
     """
@@ -71,7 +93,7 @@ def _remove_readonly(function: object, path: str, error: BaseException) -> None:
         raise error
     os.chmod(path, stat.S_IWRITE | stat.S_IREAD)
     if callable(function):
-        function(path) # NOSONAR
+        function(path)  # NOSONAR
 
 def remove_owned_tree(root: Path, *, identity: tuple[int, int] | None = None) -> None:
     """
@@ -189,7 +211,7 @@ def publish(
     staging: Path, destination: Path, *, on_created: Callable[[], None] | None = None
 ) -> None:
     """
-    Publish configured staging into an exclusively created final directory.
+    Publish configured staging while retrying transient Windows locks.
 
     Parameters
     ----------
@@ -207,7 +229,7 @@ def publish(
     CompatibilityError
         If staging fails the skeleton or redirect contract.
     OSError
-        If publication fails; already published files remain recoverable.
+        If publication fails after bounded retries; published files remain recoverable.
     """
     validate_destination(destination)
     validate_tree(staging, configured=True)
@@ -221,15 +243,21 @@ def publish(
         on_created()
     # Publication may be partial on I/O failure. Preserve the exclusively created directory.
     for child in staging.iterdir():
-        info = destination.lstat()
-        if is_redirect(destination) or (info.st_dev, info.st_ino) != identity:
-            raise ValidationError(MESSAGES["publication_destination_replaced"])
-        for ancestor in (destination.parent, *destination.parent.parents):
-            if is_redirect(ancestor):
-                raise ValidationError(MESSAGES["publication_ancestor_redirect"])
-        if is_redirect(child):
-            raise CompatibilityError(MESSAGES["publication_staging_redirect"])
-        child.rename(destination / child.name)
+        for attempt in range(WINDOWS_LOCK_ATTEMPTS):
+            info = destination.lstat()
+            if is_redirect(destination) or (info.st_dev, info.st_ino) != identity:
+                raise ValidationError(MESSAGES["publication_destination_replaced"])
+            for ancestor in (destination.parent, *destination.parent.parents):
+                if is_redirect(ancestor):
+                    raise ValidationError(MESSAGES["publication_ancestor_redirect"])
+            if is_redirect(child):
+                raise CompatibilityError(MESSAGES["publication_staging_redirect"])
+            try:
+                child.rename(destination / child.name)
+            except PermissionError as exc:
+                wait_for_windows_lock(exc, attempt)
+            else:
+                break
 
 def clone_skeleton(
     staging: Path, git: Path, runner: object, *, source: SkeletonSource | None = None

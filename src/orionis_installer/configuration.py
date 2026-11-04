@@ -1,16 +1,20 @@
 import ast
 import base64
-import shutil
-import time
+import io
+import os
+import re
+import tempfile
 from pathlib import Path, PureWindowsPath
 import tomlkit
-from dotenv import dotenv_values, set_key
+from dotenv import dotenv_values
+from dotenv.parser import Binding, parse_stream
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.utils import canonicalize_name
 from orionis_installer.exceptions import CompatibilityError
 from orionis_installer.messages import MESSAGES
 from orionis_installer.models import Database, InstallationPlan
+from orionis_installer.skeleton import WINDOWS_LOCK_ATTEMPTS, wait_for_windows_lock
 
 PORTS = {
     Database.MYSQL: 3306,
@@ -54,7 +58,7 @@ def orionis_requirement(document: tomlkit.TOMLDocument) -> Requirement:
         raise CompatibilityError(MESSAGES["requirement_url_unsupported"])
     return matches[0]
 
-def configure_pyproject( # NOSONAR
+def configure_pyproject(  # NOSONAR
     root: Path, plan: InstallationPlan, *, python_version: str = "3.14.0"
 ) -> Requirement:
     """Apply application metadata and extras while preserving template constraints.
@@ -107,7 +111,7 @@ def configure_pyproject( # NOSONAR
         if original_authors and list(project.get("maintainers", [])) == original_authors:
             del project["maintainers"]
         if "urls" in project:
-            for key, value in list(project["urls"].items()): # NOSONAR
+            for key, value in list(project["urls"].items()):  # NOSONAR
                 if str(value).rstrip("/") in {
                     "https://github.com/orionis-framework/framework",
                     "https://github.com/orionis-framework/skeleton",
@@ -222,34 +226,270 @@ def config_contract(root: Path, plan: InstallationPlan) -> None:
                 MESSAGES["skeleton_selection_unsupported"].format(active=active)
             )
 
-def _set_env_key(path: Path, key: str, value: str, *, quote_mode: str = "always") -> None:
-    """Retry atomic dotenv updates when Windows briefly denies access.
+_ENV_GROUPS = (
+    "APP",
+    "AUTH",
+    "HTTP",
+    "DB",
+    "CACHE",
+    "FILESYSTEM",
+    "LOG",
+    "QUEUE",
+    "SESSION",
+    "MAIL",
+    "REALTIME",
+    "MCP",
+    "TASKS",
+    "VIEW",
+    "TESTING",
+)
+_STORAGE_PREFIXES = {"FILESYSTEM", "LOCAL", "PUBLIC", "S3", "AWS", "AZURE", "GCS"}
+
+def _environment_group(key: str) -> str:
+    """Resolve the environment block shared by related service settings.
+
+    Parameters
+    ----------
+    key : str
+        Environment variable whose service block must be located.
+
+    Returns
+    -------
+    str
+        Shared service name, including storage provider and database-backed aliases.
+    """
+    prefix = key.partition("_")[0]
+    if prefix in _STORAGE_PREFIXES:
+        return "FILESYSTEM"
+    if key.startswith("DB_CACHE_"):
+        return "CACHE"
+    if key.startswith("DB_TASK_"):
+        return "TASKS"
+    return prefix
+
+def _assignment(key: str, value: str, quote_mode: str, newline: str) -> str:
+    """Encode one assignment without interpreting its value or expanding references.
+
+    Parameters
+    ----------
+    key : str
+        Portable environment variable name.
+    value : str
+        Raw value or an already encoded Orionis literal.
+    quote_mode : str
+        Dotenv quoting policy: ``always``, ``auto``, or ``never``.
+    newline : str
+        Line ending used by the existing environment file.
+
+    Returns
+    -------
+    str
+        Complete assignment terminated by the requested line ending.
+
+    Raises
+    ------
+    ValueError
+        If the key or quoting policy is invalid.
+    """
+    if not re.fullmatch(r"[A-Za-z_]\w*", key, flags=re.ASCII):
+        raise ValueError("Invalid environment key")
+    if quote_mode not in {"always", "auto", "never"}:
+        raise ValueError("Invalid environment quoting policy")
+    if quote_mode == "always" or (quote_mode == "auto" and not value.isalnum()):
+        value = "'" + value.replace("'", "\\'") + "'"
+    return f"{key}={value}{newline}"
+
+def _inline_comment(raw: str) -> str:  # NOSONAR
+    """Preserve a trailing comment outside an assignment's quoted value.
+
+    Parameters
+    ----------
+    raw : str
+        Original dotenv binding, possibly containing a quoted multiline value.
+
+    Returns
+    -------
+    str
+        Trailing comment beginning with ``#``, or an empty string if absent.
+    """
+    _head, separator, tail = raw.partition("=")
+    if not separator:
+        return ""
+    leading = tail[: len(tail) - len(tail.lstrip(" \t"))]
+    tail = tail.lstrip(" \t")
+    if tail.startswith(("'", '"')):
+        quote = tail[0]
+        index = 1
+        while index < len(tail):
+            if tail[index] == "\\":
+                index += 2
+                continue
+            if tail[index] == quote:
+                return (
+                    tail[index + 1 :].strip() if tail[index + 1 :].lstrip().startswith("#") else ""
+                )
+            index += 1
+        return ""
+    match = re.search(r"(?<=[ \t])#[^\r\n]*", tail)
+    if match:
+        return match.group()
+    return tail.rstrip("\r\n") if leading and tail.startswith("#") else ""
+
+def _updated_environment(text: str, key: str, value: str, quote_mode: str) -> str:  # NOSONAR
+    """Replace a value in place or insert it into its existing service block.
+
+    Parameters
+    ----------
+    text : str
+        Original environment contents with their existing line endings.
+    key : str
+        Environment variable to add or replace.
+    value : str
+        Raw value or an already encoded Orionis literal.
+    quote_mode : str
+        Dotenv quoting policy passed to the assignment encoder.
+
+    Returns
+    -------
+    str
+        Updated contents retaining unrelated bindings, comments, and multiline values.
+    """
+    newline = "\r\n" if "\r\n" in text else "\n"
+    assignment = _assignment(key, value, quote_mode, newline)
+    bindings = list(parse_stream(io.StringIO(text)))
+    matches = [binding for binding in bindings if binding.key == key]
+    if matches:
+        output: list[str] = []
+        for binding in bindings:
+            raw = binding.original.string
+            if binding.key == key:
+                prefix = re.match(r"\s*(?:export[^\S\r\n]+)?", raw)
+                comment = _inline_comment(raw)
+                raw = (prefix.group() if prefix else "") + assignment.rstrip("\r\n")
+                raw += (" " + comment if comment else "") + newline
+            output.append(raw)
+        return "".join(output)
+
+    group = _environment_group(key)
+    ranks = {name: index for index, name in enumerate(_ENV_GROUPS)}
+    rank = ranks.get(group, len(ranks))
+    records: list[tuple[Binding, int, int, int]] = []
+    cursor = previous_end = 0
+    for binding in bindings:
+        end = cursor + len(binding.original.string)
+        if binding.key is not None:
+            records.append((binding, cursor, end, previous_end))
+            previous_end = end
+        cursor = end
+    siblings = [item for item in records if _environment_group(item[0].key or "") == group]
+    if siblings:
+        position = siblings[-1][2]
+        before, after = text[:position], text[position:]
+        return before + ("" if before.endswith(("\n", "\r")) else newline) + assignment + after
+    for binding, _start, _end, block_start in records:
+        other_rank = ranks.get(_environment_group(binding.key or ""), len(ranks))
+        if other_rank > rank:
+            before = text[:block_start].rstrip("\r\n")
+            after = text[block_start:].lstrip("\r\n")
+            return (before + newline * 2 if before else "") + assignment + newline + after
+    before = text.rstrip("\r\n")
+    return (before + newline * 2 if before else "") + assignment
+
+def _write_environment(path: Path, text: str) -> None:
+    """Atomically replace an environment file while retrying transient Windows locks.
 
     Parameters
     ----------
     path : Path
-        Environment file updated by python-dotenv.
+        Destination environment file in an existing directory.
+    text : str
+        Complete replacement contents to persist as UTF-8.
+
+    Returns
+    -------
+    None
+        Replace the destination only after its temporary file is completely written.
+
+    Raises
+    ------
+    OSError
+        If a write fails or a transient Windows lock persists after five attempts.
+    """
+    for attempt in range(WINDOWS_LOCK_ATTEMPTS):
+        temporary: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                newline="",
+                prefix=".tmp_",
+                dir=path.parent,
+                delete=False,
+            ) as target:
+                temporary = Path(target.name)
+                target.write(text)
+                target.flush()
+                os.fsync(target.fileno())
+            temporary.chmod(path.stat().st_mode & 0o777 if path.exists() else 0o600)
+            os.replace(temporary, path)
+        except PermissionError as exc:
+            wait_for_windows_lock(exc, attempt)
+        else:
+            return
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+
+def set_env_value(path: Path, key: str, value: str, *, quote_mode: str = "always") -> None:
+    """Write a typed environment value inside its related configuration block.
+
+    Parameters
+    ----------
+    path : Path
+        Environment file to update without mutating the installer process.
     key : str
         Environment key to add or replace.
     value : str
-        Raw value passed to python-dotenv.
+        Raw value to store; use ``set_literal_env`` for user-supplied text.
     quote_mode : str, optional
-        Quoting policy preserved across all attempts.
+        Dotenv quoting policy: ``always``, ``auto``, or ``never``.
+
+    Returns
+    -------
+    None
+        Atomically update the file without loading its values into the process.
 
     Raises
     ------
     PermissionError
-        If access remains denied after five attempts or the error is not a Windows lock.
+        If transient Windows file locks persist after five attempts.
+    ValueError
+        If the key or quoting policy is invalid.
     """
-    for attempt in range(5):
-        try:
-            set_key(path, key, value, quote_mode=quote_mode, encoding="utf-8")
-        except PermissionError as exc:
-            if getattr(exc, "winerror", None) not in {5, 32, 33} or attempt == 4:
-                raise
-            time.sleep(0.1 * 2**attempt)
-        else:
-            return
+    with path.open(encoding="utf-8", newline="") as source:
+        text = source.read()
+    _write_environment(path, _updated_environment(text, key, value, quote_mode))
+
+def _set_env_key(path: Path, key: str, value: str, *, quote_mode: str = "always") -> None:
+    """Keep internal callers on the shared grouped environment writer.
+
+    Parameters
+    ----------
+    path : Path
+        Environment file to update.
+    key : str
+        Environment variable to add or replace.
+    value : str
+        Raw value or an already encoded Orionis literal.
+    quote_mode : str, optional
+        Dotenv quoting policy used for the assignment.
+
+    Returns
+    -------
+    None
+        Delegate the atomic update to the common environment writer.
+    """
+    set_env_value(path, key, value, quote_mode=quote_mode)
 
 def set_literal_env(path: Path, key: str, value: str) -> None:
     """
@@ -304,10 +544,10 @@ def literal_value(value: str | None) -> str:
     """
     if value is None:
         return ""
-    if value.startswith("base64:"):
+    if value.startswith("base64:"):  # NOSONAR
         try:
-            return base64.b64decode(value[7:], validate=True).decode("utf-8") # NOSONAR
-        except ValueError, UnicodeError: # NOSONAR
+            return base64.b64decode(value[7:], validate=True).decode("utf-8")  # NOSONAR
+        except ValueError, UnicodeError:  # NOSONAR
             raise CompatibilityError(MESSAGES["environment_base64_invalid"]) from None
     if value.startswith("str:"):
         return value[4:]
@@ -362,9 +602,8 @@ def _prepare_sqlite_database(root: Path, database: str) -> None:
         raise CompatibilityError(MESSAGES["sqlite_path_invalid"])
     (root / database).parent.mkdir(parents=True, exist_ok=True)
 
-
-def configure_environment(root: Path, plan: InstallationPlan) -> None:
-    """Create a local environment with verified drivers and pending credentials.
+def configure_environment(root: Path, plan: InstallationPlan) -> None:  # NOSONAR
+    """Create a local environment and consume its successfully applied examples.
 
     Parameters
     ----------
@@ -372,6 +611,11 @@ def configure_environment(root: Path, plan: InstallationPlan) -> None:
         Staging directory containing configuration and an environment example.
     plan : InstallationPlan
         Application name and effective storage and database selections.
+
+    Returns
+    -------
+    None
+        Publish grouped settings, retain the reference, and remove consumed examples.
 
     Raises
     ------
@@ -381,32 +625,51 @@ def configure_environment(root: Path, plan: InstallationPlan) -> None:
     config_contract(root, plan)
     example = environment_example(root)
     values = read_env(example)
-    required = {"APP_NAME", "APP_KEY", "FILESYSTEM_DISK", "DB_CONNECTION", "DB_DATABASE"}
-    if not required <= values.keys():
+    if not {"APP_NAME", "APP_KEY"} <= values.keys():
         raise CompatibilityError(MESSAGES["environment_keys_missing"])
-    path = root / ".env"
-    shutil.copyfile(example, path)
-    path.chmod(0o600)
-    set_literal_env(path, "APP_NAME", plan.name)
-    _set_env_key(path, "FILESYSTEM_DISK", plan.active_storage.value)
-    _set_env_key(path, "DB_CONNECTION", plan.active_database.value)
+    with example.open(encoding="utf-8", newline="") as source:
+        text = source.read()
+    updates = [
+        ("APP_NAME", "base64:" + base64.b64encode(plan.name.encode()).decode("ascii"), "always"),
+        ("FILESYSTEM_DISK", plan.active_storage.value, "always"),
+        ("DB_CONNECTION", plan.active_database.value, "always"),
+    ]
     if plan.active_database == Database.SQLITE:
-        _prepare_sqlite_database(root, literal_value(values["DB_DATABASE"]))
-        # SQLite creates the file on first migration; never truncate one from the template.
+        database = literal_value(values.get("DB_DATABASE", "database/database.sqlite"))
+        _prepare_sqlite_database(root, database)
+        if "DB_DATABASE" not in values:
+            updates.append(("DB_DATABASE", database, "always"))
+        # SQLite creates the file on first migration; never truncate template data.
     else:
-        set_literal_env(path, "DB_HOST", literal_value(values.get("DB_HOST")) or "127.0.0.1")
-        set_literal_env(path, "DB_DATABASE", plan.name)
-        set_literal_env(path, "DB_USERNAME", "configure-me")
-        _set_env_key(path, "DB_PORT", str(PORTS[plan.active_database]), quote_mode="never")
+        for key, value in (
+            ("DB_HOST", literal_value(values.get("DB_HOST")) or "127.0.0.1"),
+            ("DB_DATABASE", plan.name),
+            ("DB_USERNAME", "configure-me"),
+        ):
+            encoded = base64.b64encode(value.encode()).decode("ascii")
+            updates.append((key, "base64:" + encoded, "always"))
+        updates.append(("DB_PORT", str(PORTS[plan.active_database]), "never"))
         if plan.active_database == Database.ORACLE:
-            # Oracle uses a service/SID/DSN/TNS, not the shared DB_DATABASE string.
             database_config = root / "config" / "database.py"
             if database_config.exists():
                 config = database_config.read_text(encoding="utf-8")
                 if '"DB_SERVICE_NAME"' not in config and "'DB_SERVICE_NAME'" not in config:
                     raise CompatibilityError(MESSAGES["oracle_service_unsupported"])
-            set_literal_env(path, "DB_SERVICE_NAME", "configure-me")
+            updates.append(
+                (
+                    "DB_SERVICE_NAME",
+                    "base64:" + base64.b64encode(b"configure-me").decode("ascii"),
+                    "always",
+                )
+            )
         # DB_PASSWORD remains absent/commented. Do not manufacture credentials.
+    for key, value, quote_mode in updates:
+        text = _updated_environment(text, key, value, quote_mode)
+    _write_environment(root / ".env", text)
+    (root / ".env").chmod(0o600)
+    # Both examples were checked for ambiguity before configuration. Keep the reference.
+    for filename in (".env.example", "env.example"):
+        (root / filename).unlink(missing_ok=True)
 
 def ensure_gitignore(root: Path) -> None:
     """

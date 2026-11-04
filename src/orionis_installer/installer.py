@@ -111,7 +111,9 @@ def probe_json(runner: Runner, python: Path, root: Path, source: str) -> dict[st
     return data
 
 def _requirements_for(
-    requirements: tuple[Requirement, ...], environment: dict[str, str], extra: str,
+    requirements: tuple[Requirement, ...],
+    environment: dict[str, str],
+    extra: str,
 ) -> tuple[Requirement, ...]:
     """
     Collect normalized dependencies selected by one framework extra.
@@ -132,11 +134,12 @@ def _requirements_for(
     """
     environment["extra"] = extra
     return tuple(
-        requirement for requirement in requirements
+        requirement
+        for requirement in requirements
         if requirement.marker is None or requirement.marker.evaluate(environment)
     )
 
-def verify_metadata( # NOSONAR
+def verify_metadata(  # NOSONAR
     data: dict[str, Any],
     plan: InstallationPlan,
     requirement: Requirement,
@@ -174,7 +177,8 @@ def verify_metadata( # NOSONAR
     requirements = tuple(Requirement(raw) for raw in data["requirements"])
     environment = {key: str(value) for key, value in default_environment().items()}
     environment.update(
-        python_version="3.14", python_full_version=data["python"],
+        python_version="3.14",
+        python_full_version=data["python"],
         implementation_version=data["python"],
     )
     selected = {
@@ -197,7 +201,9 @@ def verify_metadata( # NOSONAR
                 not {
                     canonicalize_name(dependency.name)
                     for dependency in _requirements_for(requirements, environment, driver)
-                } <= aggregate_dependencies for driver in offered
+                }
+                <= aggregate_dependencies
+                for driver in offered
             ):
                 raise CompatibilityError(
                     MESSAGES["aggregate_drivers_incomplete"].format(aggregate=aggregate)
@@ -229,9 +235,8 @@ def verify_configuration(data: dict[str, Any], plan: InstallationPlan) -> None:
         data.get("database") != plan.active_database.value
         or data.get("driver") != plan.active_database.value
         or data.get("storage") != plan.active_storage.value
-        or data.get("storage_driver") != (
-            "aws" if plan.active_storage == Storage.S3 else plan.active_storage.value
-        )
+        or data.get("storage_driver")
+        != ("aws" if plan.active_storage == Storage.S3 else plan.active_storage.value)
         or data.get("name") != plan.name
     ):
         raise CompatibilityError(MESSAGES["effective_configuration_mismatch"])
@@ -314,7 +319,7 @@ class Installer:
         if self.on_step:
             self.on_step(message)
 
-    def install(self) -> InstallationResult: # NOSONAR
+    def install(self) -> InstallationResult:  # NOSONAR
         """
         Create and verify an application before reporting completion.
 

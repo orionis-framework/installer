@@ -6,6 +6,7 @@ from typing import Protocol
 from orionis_installer.configuration import (
     literal_value,
     read_env,
+    set_env_value,
     set_literal_env,
     valid_sqlite_path,
 )
@@ -16,10 +17,11 @@ from orionis_installer.models import (
     Database,
     InstallationResult,
     PostInstallOptions,
+    Stack,
     State,
 )
 from orionis_installer.prerequisites import Prerequisites
-from orionis_installer.processes import Runner, resolve_executable
+from orionis_installer.processes import Runner
 from orionis_installer.validation import is_redirect, validate_text
 
 class PostUI(Protocol):
@@ -94,7 +96,7 @@ class PostUI(Protocol):
         """
         ...
 
-def seeder_safety(root: Path) -> None: # NOSONAR
+def seeder_safety(root: Path) -> None:  # NOSONAR
     """
     Inspect a seeder tree independently of schema migration execution.
 
@@ -269,9 +271,7 @@ def _connection_prompt(root: Path, ui: PostUI) -> bool:
         if key == "DB_PORT":
             if not valid_port(value):
                 raise CompatibilityError(MESSAGES["connection_port_invalid"])
-            from dotenv import set_key
-
-            set_key(root / ".env", key, value, quote_mode="never")
+            set_env_value(root / ".env", key, value, quote_mode="never")
         else:
             set_literal_env(root / ".env", key, value)
     return True
@@ -295,6 +295,39 @@ def _safe_connection_label(value: str) -> str:
         return MESSAGES["connection_display_hidden"]
     return value
 
+def migration_commands(result: InstallationResult) -> tuple[str, ...]:
+    """
+    Select application and framework migrations required by the installed stack.
+
+    Parameters
+    ----------
+    result : InstallationResult
+        Published application whose environment selects its service backends.
+
+    Returns
+    -------
+    tuple[str, ...]
+        Ordered Reactor commands, excluding application seeders.
+    """
+    commands: list[str] = []
+    if (
+        result.plan.stack != Stack.SLIM_REALTIME
+        or (result.plan.path / "database" / "migrations").is_dir()
+    ):
+        commands.append("migrate")
+    if result.plan.stack in {Stack.MASTER, Stack.SSR}:
+        commands.append("auth:migrate")
+    values = read_env(result.plan.path / ".env")
+    for key, command in (
+        ("CACHE_STORE", "cache:migrate"),
+        ("QUEUE_CONNECTION", "queue:migrate"),
+        ("TASKS_STORE", "schedule:migrate"),
+        ("SESSION_DRIVER", "session:migrate"),
+    ):
+        if literal_value(values.get(key, "")) == "database":
+            commands.append(command)
+    return tuple(commands)
+
 def _migrate(result: InstallationResult, runner: Runner, ui: PostUI, no_interaction: bool) -> State:
     """
     Apply schema migrations with the verified application's own interpreter.
@@ -316,7 +349,7 @@ def _migrate(result: InstallationResult, runner: Runner, ui: PostUI, no_interact
     Returns
     -------
     State
-        Completed migration state, or skipped when connection setup is declined.
+        Completed migrations, or skipped when none apply or connection setup is declined.
 
     Raises
     ------
@@ -326,6 +359,9 @@ def _migrate(result: InstallationResult, runner: Runner, ui: PostUI, no_interact
         If the application's migration command fails.
     """
     root = result.plan.path
+    commands = migration_commands(result)
+    if not commands:
+        return State.SKIPPED
     values = connection_values(root)
     if values["DB_CONNECTION"] != result.plan.active_database.value:
         raise CompatibilityError(MESSAGES["connection_changed"])
@@ -354,10 +390,13 @@ def _migrate(result: InstallationResult, runner: Runner, ui: PostUI, no_interact
     ui.message(label + MESSAGES["migration_data_warning"])
     # Exact equivalent of `uv run --no-sync python -B reactor migrate`,
     # without further syncing or selecting an interpreter from uvx/PATH.
-    runner.run([project_python(root), "-B", "reactor", "migrate","--seed"], cwd=root, timeout=300)
+    python = project_python(root)
+    for command in commands:
+        ui.message(MESSAGES["migration_command"].format(command=command))
+        runner.run([python, "-B", "reactor", command], cwd=root, timeout=300)
     return State.COMPLETED
 
-def run_post_install( # NOSONAR
+def run_post_install(  # NOSONAR
     result: InstallationResult,
     options: PostInstallOptions,
     prerequisites: Prerequisites,
@@ -377,7 +416,7 @@ def run_post_install( # NOSONAR
     prerequisites : Prerequisites
         Verified Git executable used for repository initialization.
     runner : Runner
-        Process runner for Git, Reactor, and the editor launcher.
+        Process runner for Git and Reactor.
     ui : PostUI
         Interface for confirmations, connection input, and diagnostics.
     no_interaction : bool
@@ -396,13 +435,12 @@ def run_post_install( # NOSONAR
             MESSAGES["post_migration_prompt"],
             False,
         ),
-        ("editor", options.open, MESSAGES["post_editor_prompt"], True),
     ):
         try:
             selected = (
                 flag
                 if flag is not None
-                else (False if no_interaction else ui.confirm(question, default)) # NOSONAR
+                else (False if no_interaction else ui.confirm(question, default))  # NOSONAR
             )
             if not selected:
                 setattr(result, attribute, State.SKIPPED)
@@ -413,13 +451,6 @@ def run_post_install( # NOSONAR
             elif attribute == "migrations":
                 setattr(result, attribute, _migrate(result, runner, ui, no_interaction))
                 continue
-            else:
-                launcher = resolve_executable(
-                    "code", result.plan.path, excluded_roots=(result.plan.path,)
-                )
-                if launcher is None:
-                    raise CompatibilityError(MESSAGES["editor_missing"])
-                runner.openEditor(launcher, result.plan.path, cwd=result.plan.path)
             setattr(result, attribute, State.COMPLETED)
         except KeyboardInterrupt, Cancelled:
             setattr(result, attribute, State.CANCELLED)

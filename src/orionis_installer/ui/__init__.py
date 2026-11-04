@@ -5,8 +5,10 @@ from typing import TYPE_CHECKING, TextIO
 from orionis_installer.exceptions import ValidationError
 from orionis_installer.ui.messages import MESSAGES
 from orionis_installer.ui.output import Output
+
 if TYPE_CHECKING:
     from orionis_installer.ui.prompts import Prompts
+
 
 def has_tty() -> bool:
     """
@@ -18,6 +20,7 @@ def has_tty() -> bool:
         Whether interactive prompts can use the current input and output streams.
     """
     return bool(sys.stdin.isatty() and sys.stdout.isatty())
+
 
 class UI(Output):
     """Coordinate rendering and interactive prompts for installer phases."""
@@ -176,6 +179,7 @@ class UI(Output):
         value = self.prompts.confirm(label, default)
         self.choice(label, MESSAGES["yes" if value else "no"])
         return value
+
 
 def terminal_choice(label: str, choices: list[tuple[str, str]], value: str) -> str:
     """Combine a selection question with its accepted caption.

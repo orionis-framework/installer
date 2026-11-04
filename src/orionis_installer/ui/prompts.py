@@ -23,15 +23,16 @@ from orionis_installer.ui.theme import terminal_text
 
 PROMPT_STYLE = Style.from_dict(
     {
-        "question": "bold #eff1fa",
-        "selected": "bold #eff1fa bg:#2b3550",
-        "marker": "bold #b1a2ff",
-        "number": "#78dce8",
-        "hint": "#929bb0",
-        "default": "#f5ca83",
-        "description": "#b9c3d9",
+        "question": "bold #eef6ff",
+        "selected": "bold #eef6ff bg:#18354d",
+        "marker": "bold #f4c430",
+        "number": "#4cc9f0",
+        "hint": "#a0aec0",
+        "default": "#f4c430",
+        "description": "#bdd6e9",
     }
 )
+
 
 def selector_text(
     choices: list[tuple[str, str]], selected: int, default: str, *, inline: bool = False
@@ -67,6 +68,7 @@ def selector_text(
         fragments.append(("", "   " if inline else "\n"))
     return FormattedText(fragments)
 
+
 class InputValidator(Validator):
     """Adapt pure application validation to prompt-toolkit input errors."""
 
@@ -101,6 +103,7 @@ class InputValidator(Validator):
             raise PromptValidationError(
                 message=terminal_text(exc), cursor_position=len(document.text)
             ) from exc
+
 
 class Prompts:
     """Provide validated text fields and keyboard-operated choices."""
@@ -166,18 +169,19 @@ class Prompts:
         )
         return session.prompt(
             FormattedText(
-                [("class:question", terminal_text(label) + "\n"), ("class:marker", "  > ")]
+                [
+                    ("class:question", terminal_text(label) + "\n"),
+                    ("class:hint", MESSAGES["password_hint" if password else "text_hint"] + "\n"),
+                    ("class:marker", "  > "),
+                ]
             ),
             default=terminal_text(default),
             validator=InputValidator(validator) if validator else None,
             validate_while_typing=True,
             is_password=password,
-            bottom_toolbar=FormattedText(
-                [("class:hint", MESSAGES["password_hint" if password else "text_hint"])]
-            ),
         )
 
-    def select( # NOSONAR
+    def select(  # NOSONAR
         self,
         label: str,
         choices: list[tuple[str, str]],
@@ -230,6 +234,45 @@ class Prompts:
                 descriptions = {}
         selected = values.index(default)
         bindings = KeyBindings()
+
+        @bindings.add("home")
+        @bindings.add("end")
+        def edge(event: KeyPressEvent) -> None:
+            """Move focus to the first or last available choice.
+
+            Parameters
+            ----------
+            event : KeyPressEvent
+                Home or End key event identifying the requested boundary.
+            """
+            nonlocal selected
+            selected = 0 if event.key_sequence[0].key == "home" else len(values) - 1
+            event.app.invalidate()
+
+        if not inline:
+
+            @bindings.add("1")
+            @bindings.add("2")
+            @bindings.add("3")
+            @bindings.add("4")
+            @bindings.add("5")
+            @bindings.add("6")
+            @bindings.add("7")
+            @bindings.add("8")
+            @bindings.add("9")
+            def choose_number(event: KeyPressEvent) -> None:
+                """Highlight an available numbered choice without accepting it.
+
+                Parameters
+                ----------
+                event : KeyPressEvent
+                    Number key whose one-based choice is selected before Enter.
+                """
+                nonlocal selected
+                candidate = int(event.data) - 1
+                if candidate < len(values):
+                    selected = candidate
+                    event.app.invalidate()
 
         @bindings.add("up")
         @bindings.add("left")

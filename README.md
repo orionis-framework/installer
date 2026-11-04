@@ -7,8 +7,9 @@ module is `orionis_installer` and its executable is **`orionis`**.
 Choose a stack, name your application, select storage and database drivers, then
 review the installation plan. The installer downloads the skeleton, configures
 the project and installs its dependencies in an independent environment.
-After installation, you can initialize Git, run migrations and open the project
-in Visual Studio Code. `NO_COLOR` and `--no-color` disable terminal colors.
+After installation, you can initialize Git and prepare the application's database.
+The final screen shows commands for the selected stack and leaves the choice of
+editor to you. `NO_COLOR` and `--no-color` disable terminal colors.
 
 ## Installation
 
@@ -39,8 +40,9 @@ with force flags.
 
 After checking prerequisites, the wizard requests:
 
-1. Application stack: **Blank** (`blank_1.x`, the default), **SSR** (`ssr_1.x`),
-   **Slim API** (`slim_api_1.x`) or **Slim MCP** (`slim_mcp_1.x`).
+1. Application stack: **Master**, **Blank** (the default), **SSR**, **Slim API**,
+   **Slim MCP**, **Slim Worker** or **Slim Realtime**. The selector describes
+   the purpose of each variant; the installation plan shows its source branch.
 2. Application name, defaulting to `orionis-app`; `new blog` supplies it directly.
 3. Description, defaulting to `A modern application built with Orionis Framework.`
 4. Optional author name and email.
@@ -49,9 +51,15 @@ After checking prerequisites, the wizard requests:
 7. Confirmation of the absolute destination, Python target, extras, stack and source branch.
 
 Explicit options skip their corresponding questions. After installation, the
-wizard asks about Git initialization (Yes), database migrations (No),
-and Visual Studio Code (Yes), in that order. Ctrl+C cancels with exit code 130.
+wizard asks about Git initialization (Yes) and database preparation (No),
+in that order. Ctrl+C cancels with exit code 130.
 Without a TTY, use `--no-interaction`; help and version remain available.
+
+The console adapts to narrow terminals and ASCII output. Installation stages
+show their status and elapsed time; redirected output remains readable without
+animation. The opening screen uses local version information and requires no
+network lookup. The framework version is reported after it has been installed
+and verified.
 
 Names use 1–100 ASCII letters, digits, dots, hyphens and underscores, with
 alphanumeric endpoints. Path separators, traversal, controls and reserved
@@ -67,7 +75,10 @@ orionis new blog --stack Blank --no-interaction --migrate
 orionis new portal --stack SSR --no-interaction --migrate
 orionis new service --stack slim_api --no-interaction
 orionis new tools --stack slim_mcp --no-interaction
-orionis new blog --no-interaction --git --no-migrate --no-open
+orionis new full-app --stack master --no-interaction --migrate
+orionis new jobs --stack slim_worker --no-interaction --migrate
+orionis new live --stack slim_realtime --no-interaction
+orionis new blog --no-interaction --git --no-migrate
 orionis new analytics --no-interaction --storage s3 --database redshift
 orionis new team --no-interaction --storage all --database all
 orionis new blog --no-interaction --path "./Project with spaces" --author-name "Jane Doe" --author-email jane@example.com
@@ -75,7 +86,7 @@ orionis new blog --no-interaction --path "./Project with spaces" --author-name "
 
 Defaults are the Blank stack, `orionis-app`, the description above, no author, local storage and
 SQLite. Aggregate driver selections default to local storage and SQLite unless
-specified otherwise. Git, migrations and the editor are skipped unless their
+specified otherwise. Git and migrations are skipped unless their
 positive flags are provided. This mode never requests credentials.
 
 ## CLI options
@@ -86,7 +97,7 @@ positive flags are provided. This mode never requests credentials.
 | Option | Behavior |
 | --- | --- |
 | `new [NAME]` | Application name and default folder name. |
-| `--stack blank\|ssr\|slim_api\|slim_mcp` | Select the catalog repository and branch; names are case-insensitive. Defaults to Blank. |
+| `--stack master\|blank\|ssr\|slim_api\|slim_mcp\|slim_worker\|slim_realtime` | Select the catalog repository and branch; names are case-insensitive. Defaults to Blank. |
 | `--path PATH` | Final project location; its parent must exist. |
 | `--description TEXT` | Application description. |
 | `--author-name TEXT`, `--author-email TEXT` | Optional author metadata; empty values omit a field. |
@@ -95,8 +106,7 @@ positive flags are provided. This mode never requests credentials.
 | `--database sqlite\|mysql\|pgsql\|oracle\|sqlserver\|redshift\|all` | Database drivers to install. |
 | `--default-database sqlite\|mysql\|pgsql\|oracle\|sqlserver\|redshift` | Active connection with `all`; defaults to SQLite. |
 | `--git / --no-git` | Initialize Git or skip it. |
-| `--migrate / --no-migrate` | Run pending schema migrations or skip them. |
-| `--open / --no-open` | Open Visual Studio Code or skip it. |
+| `--migrate / --no-migrate` | Run application migrations and prepare required framework tables, or skip them. Seeders are never run automatically. |
 | `--no-interaction` | Apply safe defaults without reading input. |
 | `--no-color` | Disable colors; also respects `NO_COLOR`, including an empty value. |
 | `--verbose` | Show plan diagnostics without raw subprocess output or secrets. |
@@ -108,19 +118,21 @@ driver. There is no destructive `--force` option.
 
 | Stack | Starting application | Skeleton branch |
 | --- | --- | --- |
+| `master` | Full application matching the framework's reference structure. | `master` |
 | `blank` | Minimal foundation for a new application; the default. | `blank_1.x` |
 | `ssr` | Starting point for server-side rendered applications. | `ssr_1.x` |
-| `slim_api` | Lightweight starting point for API and WebSocket applications. | `slim_api_1.x` |
+| `slim_api` | Lightweight HTTP API application. | `slim_api_1.x` |
 | `slim_mcp` | Starting point for Model Context Protocol applications. | `slim_mcp_1.x` |
+| `slim_worker` | Console commands, scheduled tasks and background queue workers. | `slim_worker_1.x` |
+| `slim_realtime` | WebSocket application with an HTTP health endpoint. | `slim_realtime_1.x` |
 
-All four stacks use the official Orionis skeleton. Only the selected branch is
+All seven stacks use the official Orionis skeleton. Only the selected branch is
 downloaded; an unavailable branch stops installation without switching stacks.
 
-The downloaded bootstrap determines which route files are registered. Blank and
-SSR register `web`, `api`, `console`, `websocket` and `ai`; Slim API registers only
-`api` and `websocket`, while Slim MCP registers only `ai`. All four configure the
-`/up` health endpoint. The installer preserves each branch's files.
-Each branch's own Orionis dependency constraint is preserved.
+The downloaded bootstrap determines which route files are registered. The
+installer preserves each branch's routing, resources and configuration instead
+of adding unrelated web, database or worker files. Each branch's own Orionis
+dependency constraint is preserved; the current catalog targets Orionis 1.5.0.
 
 ## Drivers and configuration
 
@@ -153,8 +165,13 @@ no buckets, accounts, permissions or infrastructure.
 The installer preserves TOML comments, valid dependency groups, the application's
 version and the skeleton's Orionis requirement. The application remains
 unpackaged through `tool.uv.package = false`. `.env.example` is preferred;
-`env.example` is supported. Only verified configuration keys are changed, and the
-example remains intact. External connections and cloud storage require subsequent
+`env.example` is supported. The generated `.env` groups database keys together
+and storage keys together, separating groups with a blank line. Existing values
+and unrelated settings are preserved. Missing keys are inserted in their group,
+including later connection settings requested during database preparation.
+After `.env` has been written successfully, both example filenames are removed;
+`.env.reference` remains unchanged as the complete configuration reference.
+External connections and cloud storage require subsequent
 credential configuration. If a skeleton omits the parent directory for its
 declared application-local SQLite path, the installer creates that directory.
 The database file is created on first migration; existing files are never truncated.
@@ -165,10 +182,25 @@ are validated, and effective drivers are verified using the project interpreter
 in both cases.
 
 APP_KEY is generated by the framework using the project interpreter, without
-`--force`; existing keys are preserved. `--migrate` executes `reactor migrate`
-through that same interpreter after verifying the selected connection. SQLite
+`--force`; existing keys are preserved. `--migrate` uses that same interpreter
+after verifying the selected connection. It runs application migrations and then
+the framework commands required by the stack and its active database-backed
+services:
+
+| Condition | Framework command |
+| --- | --- |
+| Master or SSR authentication | `auth:migrate` |
+| `CACHE_STORE=database` | `cache:migrate` |
+| `QUEUE_CONNECTION=database` (the Slim Worker default) | `queue:migrate` |
+| `TASKS_STORE=database` | `schedule:migrate` |
+| `SESSION_DRIVER=database` | `session:migrate` |
+
+Slim Realtime skips database preparation when it has no application migrations
+or database-backed services. SQLite
 works immediately; external databases require complete connection settings.
-Schema migrations run independently of seeders. To populate initial data, review
+Framework commands create their internal tables from Orionis definitions;
+duplicated application migrations are not added. Schema migrations run
+independently of seeders. To populate initial data, review
 the application's seeders and credentials, then invoke `reactor migrate --seed`
 manually from the generated project.
 
@@ -180,6 +212,11 @@ area, validates its checked-out branch and revision and removes only that clone'
 `uv sync --python 3.14` at the final location. `.venv` is never moved from staging.
 Python, the installed Orionis distribution, extras, lockfile, APP_KEY and effective
 configuration are checked before reporting success.
+
+Environment replacement and publication retry transient Windows access, sharing
+and lock violations up to five attempts with bounded backoff. Publication rechecks
+destination ownership and path redirections before every attempt; persistent and
+unrelated I/O errors still stop the installation.
 
 Failures before publication clean only owned staging files. Failures after
 publication preserve the project and report recovery steps. The operation is not
@@ -196,7 +233,7 @@ index and download policies.
 | `3` | Project created, but a requested post-install operation failed. |
 | `130` | User cancellation or end of input. |
 
-Git runs only `git init`. It creates no commit, remote or push. Git and editor
+Git runs only `git init`. It creates no commit, remote or push. Git and migration
 failures preserve the project; independent post-install operations still run
 unless cancelled. A failed migration may have changed data: inspect the database
 before retrying. No automatic rollback or `migrate:fresh` is performed.
@@ -209,11 +246,21 @@ uv sync --python 3.14
 uv run python -B reactor key:generate
 ```
 
-Start a ready application:
+Start an HTTP, SSR, MCP or realtime application:
 
 ```bash
 cd blog
 uv run python -B reactor serve
+```
+
+For Slim MCP, connect [Orionis Inspector](https://inspector.orionis-framework.com/)
+to the MCP endpoint printed in the project's README. For Slim Worker, prepare
+the queue if you skipped `--migrate`, then start processing jobs:
+
+```bash
+cd jobs
+uv run python -B reactor queue:migrate
+uv run python -B reactor queue:work
 ```
 
 Apply pending schema migrations:
@@ -228,11 +275,25 @@ After reviewing the connection and securing the seeders, populate initial data:
 uv run python -B reactor migrate --seed
 ```
 
+## Code quality
+
+Run the same lint, formatting and type checks used by CI:
+
+```bash
+uv run --no-sync ruff check .
+uv run --no-sync ruff format --check .
+uv run --no-sync mypy
+```
+
+Apply formatting with `uv run --no-sync ruff format .`. CI excludes the downloaded
+skeleton checkouts so these checks cover only the installer's own code.
+
 ## Validating skeletons
 
 Run offline tests with `uv run --no-sync pytest -m "not smoke"`. The real-branch
 matrix additionally requires `ORIONIS_SKELETON_AUDIT` to point to a directory
-containing separate `blank`, `ssr`, `slim_api` and `slim_mcp` checkouts of the
+containing separate `master`, `blank`, `ssr`, `slim_api`, `slim_mcp`, `slim_worker`
+and `slim_realtime` checkouts of the
 catalog's exact branches. An unset variable skips the optional audit; a configured
 but incomplete directory stops the run once and names all missing branches.
 
@@ -249,9 +310,9 @@ run `uv lock` to refresh [uv.lock](uv.lock), then run
 [RELEASE.ps1](RELEASE.ps1) from the `main` branch.
 The script rejects mismatched versions before testing, building or publishing.
 Before testing, it downloads every stack using the repository and branch in
-[the source catalog](src/orionis_installer/models.py), including Slim API and
-Slim MCP. No separate stack list or inferred branch names are used for release
-checkouts. CI also checks out all four branches for the real-branch matrix.
+[the source catalog](src/orionis_installer/models.py). No separate stack list or
+inferred branch names are used for release checkouts. CI also checks out all
+seven branches for the real-branch matrix.
 It also commits and pushes project changes before publishing to PyPI.
 The local release script is excluded from Git; its checkout regression runs only
 when that script and the selected PowerShell edition are available.

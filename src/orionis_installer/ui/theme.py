@@ -1,25 +1,28 @@
 import re
 from rich.theme import Theme
 
+_BOLD_CYAN = "bold #4cc9f0"
+
 THEME = Theme(
     {
-        "orionis": "bold #b1a2ff",
+        "orionis": _BOLD_CYAN,
         "logo_outline": "bold #134675",
         "logo_star": "bold #f4c430",
-        "logo_spark": "bold #4cc9f0",
-        "accent": "#78dce8",
-        "success": "#8ce3b0",
-        "warning": "#f5ca83",
+        "logo_spark": _BOLD_CYAN,
+        "accent": "#4cc9f0",
+        "success": "#76dbac",
+        "warning": "#f4c430",
         "error": "bold #ff8d9c",
-        "muted": "#929bb0",
-        "border": "#545f7a",
-        "heading": "bold #eff1fa",
-        "number": "bold #78dce8",
-        "command": "#d9e1f2",
+        "muted": "#a0aec0",
+        "border": "#385575",
+        "heading": "bold #eef6ff",
+        "number": _BOLD_CYAN,
+        "command": "#d7edff",
     }
 )
 
 _ANSI = re.compile(r"\x1b(?:\][^\x07\x1b]*(?:\x07|\x1b\\)|\[[0-?]*[ -/]*[@-~]|[@-_])")
+
 
 def terminal_text(value: object) -> str:
     """

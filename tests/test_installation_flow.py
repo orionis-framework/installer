@@ -1,0 +1,167 @@
+"""Verify stack preparation and editor-independent post-install behavior."""
+
+import sys
+from pathlib import Path
+from unittest.mock import Mock, patch
+import pytest
+from typer.testing import CliRunner
+from orionis_installer.cli import app
+from orionis_installer.exceptions import ProcessError
+from orionis_installer.models import (
+    InstallationPlan,
+    InstallationResult,
+    PostInstallOptions,
+    Stack,
+    State,
+)
+from orionis_installer.post_install import migration_commands, run_post_install
+from orionis_installer.prerequisites import Prerequisites
+from orionis_installer.processes import Runner
+
+@pytest.mark.parametrize("flag", ["--open", "--no-open"])
+def test_removed_editor_flags_are_rejected(flag: str) -> None:
+    """Reject retired editor options before creating a project.
+
+    Parameters
+    ----------
+    flag : str
+        Former editor launch option.
+    """
+    result = CliRunner().invoke(app, ["new", "example", flag, "--no-interaction"])
+    assert result.exit_code == 2
+    assert "No such option" in result.output
+
+@pytest.mark.parametrize("stack", list(Stack))
+def test_stack_migrations_do_not_execute_seeders(tmp_path: Path, stack: Stack) -> None:
+    """Prepare each stack's required tables without running application seeders.
+
+    Parameters
+    ----------
+    tmp_path : Path
+        Disposable application directory containing environment configuration.
+    stack : Stack
+        Application variant whose database setup is being requested.
+    """
+    queue = "database" if stack == Stack.SLIM_WORKER else "sync"
+    (tmp_path / ".env").write_text(
+        f"DB_CONNECTION=sqlite\nDB_DATABASE=database/database.sqlite\nQUEUE_CONNECTION={queue}\n",
+        encoding="utf-8",
+    )
+    result = InstallationResult(
+        InstallationPlan(name="example", path=tmp_path, stack=stack),
+        creation=State.COMPLETED,
+    )
+    prerequisites = Prerequisites(
+        tmp_path / "uv",
+        tmp_path / "git",
+        Path(sys.executable),
+        "3.14.3",
+    )
+    runner, ui = Mock(spec=Runner), Mock()
+    python = tmp_path / ".venv" / "Scripts" / "python.exe"
+    with patch("orionis_installer.post_install.project_python", return_value=python):
+        run_post_install(
+            result,
+            PostInstallOptions(migrate=True),
+            prerequisites,
+            runner,
+            ui,
+            no_interaction=True,
+        )
+    expected = [] if stack == Stack.SLIM_REALTIME else ["migrate"]
+    if stack in {Stack.MASTER, Stack.SSR}:
+        expected.append("auth:migrate")
+    if stack == Stack.SLIM_WORKER:
+        expected.append("queue:migrate")
+    assert [call.args[0] for call in runner.run.call_args_list] == [
+        [python, "-B", "reactor", command] for command in expected
+    ]
+    expected_state = State.COMPLETED if expected else State.SKIPPED
+    assert result.migrations == expected_state
+    assert result.exit_code == 0
+    ui.confirm.assert_not_called()
+
+@pytest.mark.parametrize(
+    "key,command",
+    [
+        ("CACHE_STORE", "cache:migrate"),
+        ("QUEUE_CONNECTION", "queue:migrate"),
+        ("TASKS_STORE", "schedule:migrate"),
+        ("SESSION_DRIVER", "session:migrate"),
+    ],
+)
+def test_selected_database_services_receive_their_migrations(
+    tmp_path: Path,
+    key: str,
+    command: str,
+) -> None:
+    """Include the migration for a service configured with a database backend.
+
+    Parameters
+    ----------
+    tmp_path : Path
+        Disposable application environment directory.
+    key : str
+        Service backend selector.
+    command : str
+        Framework command that creates the selected service's tables.
+    """
+    (tmp_path / ".env").write_text(f"{key}='str:database'\n", encoding="utf-8")
+    result = InstallationResult(InstallationPlan(name="example", path=tmp_path))
+    assert migration_commands(result) == ("migrate", command)
+
+def test_realtime_application_migrations_are_included_when_added(tmp_path: Path) -> None:
+    """Honor application migrations added to a realtime project.
+
+    Parameters
+    ----------
+    tmp_path : Path
+        Disposable realtime project with a custom migrations directory.
+    """
+    (tmp_path / ".env").write_text("", encoding="utf-8")
+    (tmp_path / "database" / "migrations").mkdir(parents=True)
+    result = InstallationResult(
+        InstallationPlan(name="example", path=tmp_path, stack=Stack.SLIM_REALTIME),
+    )
+    assert migration_commands(result) == ("migrate",)
+
+def test_internal_migration_failure_preserves_created_project(tmp_path: Path) -> None:
+    """Report a framework migration failure after applying application migrations.
+
+    Parameters
+    ----------
+    tmp_path : Path
+        Disposable full application directory.
+    """
+    (tmp_path / ".env").write_text(
+        "DB_CONNECTION=sqlite\nDB_DATABASE=database/database.sqlite\n",
+        encoding="utf-8",
+    )
+    result = InstallationResult(
+        InstallationPlan(name="example", path=tmp_path, stack=Stack.MASTER),
+        creation=State.COMPLETED,
+    )
+    prerequisites = Prerequisites(
+        tmp_path / "uv",
+        tmp_path / "git",
+        Path(sys.executable),
+        "3.14.3",
+    )
+    runner, ui = Mock(spec=Runner), Mock()
+    runner.run.side_effect = [None, ProcessError("Migration failed")]
+    with patch("orionis_installer.post_install.project_python", return_value=Path(sys.executable)):
+        run_post_install(
+            result,
+            PostInstallOptions(migrate=True),
+            prerequisites,
+            runner,
+            ui,
+            no_interaction=True,
+        )
+    assert result.creation == State.COMPLETED
+    assert result.migrations == State.FAILED
+    assert result.exit_code == 3
+    assert (tmp_path / ".env").is_file()
+    assert [call.args[0][-1] for call in runner.run.call_args_list] == ["migrate", "auth:migrate"]
+    assert "reported migration commands" in result.warnings[0]
+    assert "auth:migrate" in ui.message.call_args.args[0]

@@ -164,17 +164,13 @@ MESSAGES: dict[str, str] = {
     "connection_display_host": "; host: {host}",
     "migration_data_warning": ". Applying pending schema migrations.",
     "post_git_prompt": "Initialize Git in the project?",
-    "post_migration_prompt": "Apply database migrations?",
-    "post_editor_prompt": "Open the project in Visual Studio Code?",
-    "editor_missing": (
-        "Visual Studio Code was not found. Open the project folder manually using File > "
-        "Open Folder."
-    ),
+    "post_migration_prompt": "Apply application and configured service migrations?",
+    "migration_command": "Preparing database storage: {command}",
     "post_cancelled": "Operation cancelled. Project preserved at {path}.",
     "post_files_failed": "A post-install file operation failed.",
     "migration_partial_warning": (
         " Some migrations may have been applied. Review the project "
-        "state and run uv run python -B reactor migrate again; no rollback or "
+        "state and rerun the reported migration commands; no rollback or "
         "migrate:fresh was performed."
     ),
     "connection_host_label": "Host",
@@ -218,11 +214,6 @@ MESSAGES: dict[str, str] = {
         "Python must not come from the installer working directory."
     ),
     "executable_name_invalid": "The executable name must be a simple name.",
-    "editor_wrapper_unreadable": "The Visual Studio Code launcher could not be read.",
-    "editor_wrapper_incompatible": "The Visual Studio Code launcher has an unsupported format.",
-    "editor_wrapper_ambiguous": "The Visual Studio Code launcher contains ambiguous paths.",
-    "editor_wrapper_outside": "The Visual Studio Code launcher points outside its installation.",
-    "editor_components_missing": "The official Visual Studio Code components were not found.",
     "windows_process_isolation_failed": "The Windows process group could not be isolated.",
     "windows_threads_enumeration_failed": "The controlled process threads could not be enumerated.",
     "windows_primary_thread_missing": "The controlled process primary thread was not identified.",

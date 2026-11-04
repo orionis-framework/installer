@@ -89,16 +89,18 @@ def main() -> None:
                 "--no-color",
                 "--git",
                 "--migrate",
-                "--no-open",
             ],
             cwd=root,
             timeout=900,
             check=False,
         )
         assert response.returncode == 0, "Requested schema migrations must complete successfully."
-        assert (project / ".git").is_dir() and (project / "uv.lock").is_file() # NOSONAR
+        assert (project / ".git").is_dir() and (project / "uv.lock").is_file()  # NOSONAR
         application_environment = read_env(project / ".env")
         assert application_environment["APP_KEY"]
+        assert not (project / ".env.example").exists()
+        assert not (project / "env.example").exists()
+        assert (project / ".env.reference").is_file()
         assert not (project / ".orionis-install.json").exists()
         source = STACKS[Stack.SSR]
         clone_message = MESSAGES["phase_clone"].format(
@@ -116,8 +118,15 @@ def main() -> None:
             }
             applied = connection.execute("SELECT COUNT(*) FROM migrations").fetchone()[0]
             users = connection.execute("SELECT COUNT(*) FROM users").fetchone()[0]
-        assert {"migrations", "users", "scheduler_tasks", "cache"} <= tables
-        assert applied > 0 and users == 0
+        assert {
+            "migrations",
+            "users",
+            "permissions",
+            "roles",
+            "personal_access_tokens",
+            "password_reset_tokens",
+        } <= tables
+        assert applied == 1 and users == 0
         child = runner.run(
             [
                 project_python(project),

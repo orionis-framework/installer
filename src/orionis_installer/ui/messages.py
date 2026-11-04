@@ -1,7 +1,7 @@
 from orionis_installer.models import STACKS
 
 MESSAGES = {
-    "tagline": "A new point in your constellation.",
+    "tagline": "Build your next constellation.",
     "stack": "Choose your application stack",
     "name": "Application name",
     "description": "Description",
@@ -14,7 +14,6 @@ MESSAGES = {
     "confirm": "Create the application with this configuration?",
     "git": "Initialize Git in the project?",
     "migrate": "Run database migrations?",
-    "open": "Open the project in Visual Studio Code?",
     "no_tty": (
         "This terminal does not support interaction. Use 'orionis new --no-interaction' "
         "with the required options."
@@ -23,20 +22,25 @@ MESSAGES = {
     "not_confirmed": "Creation skipped; the project has not been downloaded.",
     "installing": "Downloading, configuring, and installing the application...",
     "summary": "Installation plan",
-    "summary_hint": "Review before creation",
+    "summary_hint": "Ready for your review",
     "final": "Installation result",
     "error_title": "Installation stopped",
     "ready": "Application ready.",
     "ready_warnings": "Application created; review warnings and pending states.",
     "not_ready": "The application is not ready; review the preceding diagnostic.",
-    "navigation": "Up/Down: select  |  Enter: accept  |  Ctrl+C: cancel",
+    "navigation": "Arrows / 1-9: choose  |  Enter: accept  |  Ctrl+C: cancel",
     "yes": "Yes",
     "no": "No",
     "optional": "skipped",
     "no_extras": "None",
     "next": "Next steps",
-    "next_hint": "Start your application from its project directory.",
+    "next_hint": "Run these commands from your terminal, then use your preferred editor.",
     "migration_pending": ("Migrations pending. Review the database connection, then run:"),
+    "worker_hint": "Run the scheduler in a separate terminal when the application needs it:",
+    "blank_hint": "Explore Reactor commands and add your application's first feature:",
+    "mcp_hint": "Connect the Orionis MCP Inspector to http://127.0.0.1:8000/mcp:",
+    "mcp_inspector": "https://inspector.orionis-framework.com/",
+    "recovery_hint": "Complete dependency installation and ensure an application key exists:",
     "section_application": "01  Application",
     "section_application_hint": "Choose a starting point and make it yours.",
     "section_services": "02  Services",
@@ -55,7 +59,7 @@ MESSAGES = {
     "stage_dependencies": "Dependencies",
     "stage_verification": "Verification",
     "text_hint": "Enter: continue  |  Ctrl+C: cancel",
-    "password_hint": "Input hidden  |  Enter: continue  |  Ctrl+C: cancel", # NOSONAR
+    "password_hint": "Input hidden  |  Enter: continue  |  Ctrl+C: cancel",  # NOSONAR
     "confirm_hint": "Left/Right: choose  |  Y/N: choose  |  Enter: confirm",
     "unexpected": (
         "Unexpected installation error. A published project is preserved; "
@@ -90,8 +94,7 @@ CLI_HELP = {
     "default_database": "Active connection with --database all; defaults to sqlite.",
     "git": "Initialize Git after installation.",
     "migrate": "Run database migrations without executing seeders.",
-    "open": "Open the project in a new VS Code window.",
-    "no_interaction": "Use safe defaults; Git, migrations, and editor require positive flags.",
+    "no_interaction": "Use safe defaults; Git and migrations require positive flags.",
 }
 
 STACK_CHOICES = [(stack.value, source.label) for stack, source in STACKS.items()]
@@ -152,5 +155,4 @@ LABELS = {
     "factories": "Factories",
     "git": "Git",
     "migrations": "Migrations",
-    "editor": "Visual Studio Code",
 }

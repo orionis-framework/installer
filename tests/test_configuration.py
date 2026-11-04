@@ -4,22 +4,29 @@ import errno
 import os
 import time
 from pathlib import Path
-
 import pytest
 
-from orionis_installer import configuration
 from orionis_installer.configuration import (
-    configure_environment, configure_pyproject, literal_value, read_env, set_literal_env,
+    _inline_comment,
+    configure_environment,
+    configure_pyproject,
+    literal_value,
+    read_env,
+    set_env_value,
+    set_literal_env,
     valid_sqlite_path,
 )
+from orionis_installer.exceptions import CompatibilityError
 from orionis_installer.models import Database, InstallationPlan, Stack, Storage
 
-
-@pytest.mark.parametrize("stack", ["blank", "ssr", "slim_api", "slim_mcp"])
+@pytest.mark.parametrize("stack", list(Stack))
 @pytest.mark.parametrize("storage", list(Storage))
 @pytest.mark.parametrize("database", list(Database))
 def test_manifest_driver_extras(
-    tmp_path: Path, stack: str, storage: Storage, database: Database,
+    tmp_path: Path,
+    stack: str,
+    storage: Storage,
+    database: Database,
 ) -> None:
     """Request only the framework extras required by the selected drivers.
 
@@ -35,12 +42,15 @@ def test_manifest_driver_extras(
         Requested database driver selection.
     """
     (tmp_path / "pyproject.toml").write_text(
-        '[project]\nname="template"\nrequires-python=">=3.14"\n'
-        'dependencies=["orionis>=0.932.0"]\n',
+        '[project]\nname="template"\nrequires-python=">=3.14"\ndependencies=["orionis>=0.932.0"]\n',
         encoding="utf-8",
     )
     plan = InstallationPlan(
-        name="example-app", path=tmp_path, stack=Stack(stack), storage=storage, database=database,
+        name="example-app",
+        path=tmp_path,
+        stack=Stack(stack),
+        storage=storage,
+        database=database,
     )
     expected: set[str] = set()
     if storage != Storage.LOCAL:
@@ -56,12 +66,14 @@ def test_manifest_driver_extras(
         "orionis" + (f"[{','.join(sorted(expected))}]" if expected else "") + ">=0.932.0"
     )
 
-
 @pytest.mark.parametrize("database_directory", [False, True])
 @pytest.mark.parametrize("database", [value for value in Database if value != Database.ALL])
 @pytest.mark.parametrize("winerror", [None, 5, 32, 33])
 def test_minimal_environment_supports_database(
-    tmp_path: Path, database: Database, monkeypatch: pytest.MonkeyPatch, winerror: int | None,
+    tmp_path: Path,
+    database: Database,
+    monkeypatch: pytest.MonkeyPatch,
+    winerror: int | None,
     database_directory: bool,
 ) -> None:
     """Generate every concrete database from the skeleton's minimal environment.
@@ -75,47 +87,26 @@ def test_minimal_environment_supports_database(
     monkeypatch : pytest.MonkeyPatch
         Scoped replacement and retry-delay controls.
     winerror : int or None
-        Windows error raised before writing and on each first replacement,
+        Windows error raised on the first two replacement attempts,
         or no simulated lock.
     database_directory : bool
         Whether the template already includes a SQLite file and its parent directory.
     """
     replace = os.replace
-    write_key = configuration.set_key
     attempts = 0
-    failures = 0
-    first_write = True
     delays: list[float] = []
 
     def replace_with_lock(source: Path, destination: Path) -> None:
-        """Block each first replacement without changing the destination."""
+        """Simulate two transient locks without changing the destination."""
         nonlocal attempts
         attempts += 1
-        if winerror is not None and attempts % 2:
+        if winerror is not None and attempts <= 2:
             error = PermissionError(errno.EACCES, "Environment temporarily locked")
             error.winerror = winerror
             raise error
         replace(source, destination)
 
-    def write_with_lock(
-        path: Path, key: str, value: str, *, quote_mode: str, encoding: str,
-    ) -> None:
-        """Count every retried write failure, including locks before replacement."""
-        nonlocal failures, first_write
-        try:
-            if first_write:
-                first_write = False
-                if winerror is not None:
-                    error = PermissionError(errno.EACCES, "Environment temporarily locked")
-                    error.winerror = winerror
-                    raise error
-            write_key(path, key, value, quote_mode=quote_mode, encoding=encoding)
-        except PermissionError:
-            failures += 1
-            raise
-
     monkeypatch.setattr(os, "replace", replace_with_lock)
-    monkeypatch.setattr(configuration, "set_key", write_with_lock)
     monkeypatch.setattr(time, "sleep", delays.append)
     (tmp_path / "config").mkdir()
     if database_directory:
@@ -123,14 +114,14 @@ def test_minimal_environment_supports_database(
         (tmp_path / "database" / "database.sqlite").write_bytes(b"existing database")
     (tmp_path / ".env.example").write_text(
         'APP_NAME="Orionis"\nAPP_KEY=\nFILESYSTEM_DISK=local\n'
-        'DB_CONNECTION=sqlite\nDB_DATABASE=database/database.sqlite\n',
+        "DB_CONNECTION=sqlite\nDB_DATABASE=database/database.sqlite\n",
         encoding="utf-8",
     )
     (tmp_path / "config" / "database.py").write_text(
         'default = Env.get("DB_CONNECTION")\n'
         'service = Env.get("DB_SERVICE_NAME")\n'
-        'connections = Connections(sqlite=None, mysql=None, pgsql=None, '
-        'oracle=None, sqlserver=None, redshift=None)\n',
+        "connections = Connections(sqlite=None, mysql=None, pgsql=None, "
+        "oracle=None, sqlserver=None, redshift=None)\n",
         encoding="utf-8",
     )
     (tmp_path / "config" / "filesystems.py").write_text(
@@ -146,9 +137,8 @@ def test_minimal_environment_supports_database(
     assert literal_value(values["APP_NAME"]) == plan.name
     assert "DB_PASSWORD" not in values
     assert not list(tmp_path.glob(".tmp_*"))
-    assert len(delays) == failures
-    if winerror is not None:
-        assert delays[:2] == [0.1, 0.2]
+    assert delays == ([] if winerror is None else [0.1, 0.2])
+    assert not (tmp_path / ".env.example").exists()
     if database == Database.SQLITE:
         assert values["DB_DATABASE"] == "database/database.sqlite"
         assert (tmp_path / "database").is_dir()
@@ -163,7 +153,6 @@ def test_minimal_environment_supports_database(
         if database == Database.ORACLE:
             assert literal_value(values["DB_SERVICE_NAME"]) == "configure-me"
 
-
 @pytest.mark.parametrize(
     ("error_number", "winerror", "expected_attempts"),
     [
@@ -175,8 +164,11 @@ def test_minimal_environment_supports_database(
     ],
 )
 def test_environment_write_preserves_file_on_persistent_error(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error_number: int,
-    winerror: int | None, expected_attempts: int,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    error_number: int,
+    winerror: int | None,
+    expected_attempts: int,
 ) -> None:
     """Bound Windows retries and propagate other failures without changing the file.
 
@@ -220,7 +212,6 @@ def test_environment_write_preserves_file_on_persistent_error(
     assert path.read_text(encoding="utf-8") == original
     assert not list(tmp_path.glob(".tmp_*"))
 
-
 @pytest.mark.parametrize("value", [".", "./", "", ":memory:", "../data.sqlite", "file:test"])
 def test_sqlite_rejects_nonpersistent_paths(value: str) -> None:
     """Reject paths that do not identify a persistent application-local file.
@@ -231,3 +222,266 @@ def test_sqlite_rejects_nonpersistent_paths(value: str) -> None:
         Unsafe or non-file SQLite path.
     """
     assert not valid_sqlite_path(value)
+
+@pytest.mark.parametrize("filename", [".env.example", "env.example", "both"])
+@pytest.mark.parametrize("database", [Database.SQLITE, Database.PGSQL, Database.ORACLE])
+def test_environment_adds_missing_sections_and_retains_reference(
+    tmp_path: Path,
+    filename: str,
+    database: Database,
+) -> None:
+    """Configure inherited defaults and remove only successfully consumed examples.
+
+    Parameters
+    ----------
+    tmp_path : Path
+        Isolated application directory.
+    filename : str
+        Preferred, legacy, or duplicate equivalent template filenames.
+    database : Database
+        Database selection requiring inherited core configuration.
+    """
+    original = (
+        "APP_NAME=Template\nAPP_KEY=\n\nCACHE_STORE=file\n\n"
+        "LOG_CHANNEL=single\n\nQUEUE_CONNECTION=database\n\nREALTIME_HOST=127.0.0.1\n"
+    )
+    examples = (".env.example", "env.example") if filename == "both" else (filename,)
+    for example in examples:
+        (tmp_path / example).write_text(original, encoding="utf-8")
+    reference = b"# All settings\r\nAPP_NAME=reference\r\nS3_BUCKET=\r\n"
+    (tmp_path / ".env.reference").write_bytes(reference)
+    plan = InstallationPlan(
+        name="example-app",
+        path=tmp_path,
+        storage=Storage.S3,
+        database=database,
+    )
+
+    configure_environment(tmp_path, plan)
+
+    path = tmp_path / ".env"
+    result = path.read_text(encoding="utf-8")
+    values = read_env(path)
+    assert values["FILESYSTEM_DISK"] == "s3"
+    assert values["DB_CONNECTION"] == database.value
+    assert literal_value(values["APP_NAME"]) == "example-app"
+    assert result.index("APP_KEY=") < result.index("DB_CONNECTION=")
+    assert result.index("DB_DATABASE=") < result.index("CACHE_STORE=")
+    assert result.index("CACHE_STORE=") < result.index("FILESYSTEM_DISK=")
+    assert result.index("FILESYSTEM_DISK=") < result.index("LOG_CHANNEL=")
+    assert "\n\nCACHE_STORE=" in result
+    assert "\n\nFILESYSTEM_DISK=" in result
+    assert "\n\nLOG_CHANNEL=" in result
+    assert (tmp_path / ".env.reference").read_bytes() == reference
+    assert not (tmp_path / ".env.example").exists()
+    assert not (tmp_path / "env.example").exists()
+    assert not list(tmp_path.glob(".tmp_*"))
+
+@pytest.mark.parametrize(
+    "storage_key",
+    ["S3_KEY", "AWS_ACCESS_KEY_ID", "AZURE_ACCOUNT_KEY", "GCS_KEY_FILE"],
+)
+def test_followup_credentials_preserve_groups_and_original_content(
+    tmp_path: Path,
+    storage_key: str,
+) -> None:
+    """Keep connection updates grouped without rewriting unrelated dotenv content.
+
+    Parameters
+    ----------
+    tmp_path : Path
+        Isolated directory containing an environment file.
+    storage_key : str
+        Provider-specific credential belonging to the storage block.
+    """
+    path = tmp_path / ".env"
+    multiline = 'CUSTOM_TEXT="first\r\nsecond # kept"\r\n'
+    original = (
+        "# Local settings\r\nAPP_NAME=demo\r\nAPP_KEY=\r\n\r\n"
+        "# Database\r\nexport DB_CONNECTION=sqlite # selected driver\r\n"
+        "DB_DATABASE='database/database.sqlite'\r\n\r\n"
+        "# Storage\r\nFILESYSTEM_DISK=local\r\nS3_BUCKET=uploads\r\n\r\n"
+        "# Logs\r\nLOG_CHANNEL=single\r\n\r\n" + multiline + "MANUAL_VALUE=${APP_NAME}\r\n"
+    )
+    path.write_bytes(original.encode("utf-8"))
+    secret = "contraseña 'quoted' ${APP_NAME} \\ # literal\nsecond line"
+
+    set_literal_env(path, "DB_PASSWORD", secret)
+    set_env_value(path, "DB_PORT", "5432", quote_mode="never")
+    set_env_value(path, "DB_CONNECTION", "pgsql")
+    set_literal_env(path, storage_key, secret)
+
+    result = path.read_bytes().decode("utf-8")
+    values = read_env(path)
+    assert literal_value(values["DB_PASSWORD"]) == secret
+    assert literal_value(values[storage_key]) == secret
+    assert values["DB_PORT"] == "5432"
+    assert values["MANUAL_VALUE"] == "${APP_NAME}"
+    assert "export DB_CONNECTION='pgsql' # selected driver\r\n" in result
+    assert "DB_DATABASE='database/database.sqlite'\r\n" in result
+    assert result.index("DB_DATABASE=") < result.index("DB_PASSWORD=")
+    assert result.index("DB_PASSWORD=") < result.index("DB_PORT=")
+    assert result.index("DB_PORT=") < result.index("# Storage")
+    assert result.index("S3_BUCKET=") < result.index(storage_key + "=")
+    assert result.index(storage_key + "=") < result.index("# Logs")
+    assert multiline in result
+    assert result.startswith("# Local settings\r\nAPP_NAME=demo\r\nAPP_KEY=\r\n\r\n")
+    assert result.count("\n") == result.count("\r\n")
+
+@pytest.mark.parametrize(
+    ("raw", "comment"),
+    [
+        ("APP=plain  # comment\r\n", "# comment"),
+        ("APP=plain\t# comment\n", "# comment"),
+        ("APP=plain#literal\n", ""),
+        ("APP=plain \v#literal\n", ""),
+        ("APP=plain\r\n# next line\n", ""),
+        ("APP= # comment\n", "# comment"),
+        ("APP=#literal\n", ""),
+        ('APP="text # inside" # comment\n', "# comment"),
+        ("APP=plain # first # second\n", "# first # second"),
+        pytest.param("APP=plain" + " " * 100_000 + "tail\n", "", id="long-whitespace"),
+    ],
+)
+def test_inline_comments_preserve_dotenv_boundaries(raw: str, comment: str) -> None:
+    """Keep literal hashes and line boundaries distinct from trailing comments.
+
+    Parameters
+    ----------
+    raw : str
+        Original dotenv assignment, including long whitespace without a comment.
+    comment : str
+        Expected trailing comment, or an empty string when absent.
+    """
+    assert _inline_comment(raw) == comment
+
+def test_missing_block_precedes_next_section_comment(tmp_path: Path) -> None:
+    """Keep section comments attached when inserting a previously absent block.
+
+    Parameters
+    ----------
+    tmp_path : Path
+        Isolated directory containing an environment file.
+    """
+    path = tmp_path / ".env"
+    path.write_text("APP_KEY=\n\n# Logging settings\nLOG_CHANNEL=single\n", encoding="utf-8")
+
+    set_env_value(path, "FILESYSTEM_DISK", "local")
+
+    assert path.read_text(encoding="utf-8") == (
+        "APP_KEY=\n\nFILESYSTEM_DISK='local'\n\n# Logging settings\nLOG_CHANNEL=single\n"
+    )
+
+@pytest.mark.parametrize("existing_environment", [False, True])
+def test_generation_failure_preserves_templates_and_previous_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    existing_environment: bool,
+) -> None:
+    """Retain templates and existing secrets when an atomic replacement fails.
+
+    Parameters
+    ----------
+    tmp_path : Path
+        Isolated directory containing template inputs.
+    monkeypatch : pytest.MonkeyPatch
+        Scoped operating-system failure injection.
+    existing_environment : bool
+        Whether a prior environment must remain byte-for-byte intact.
+    """
+    original = b"APP_NAME=Template\nAPP_KEY=\n"
+    reference = b"# reference\nDB_CONNECTION=sqlite\n"
+    (tmp_path / ".env.example").write_bytes(original)
+    (tmp_path / ".env.reference").write_bytes(reference)
+    path = tmp_path / ".env"
+    if existing_environment:
+        path.write_bytes(b"APP_KEY=existing-secret\n")
+
+    def deny_replacement(source: Path, destination: Path) -> None:
+        """Fail before replacing any environment content."""
+        raise OSError(errno.ENOSPC, "No storage available")
+
+    monkeypatch.setattr(os, "replace", deny_replacement)
+    with pytest.raises(OSError):
+        configure_environment(tmp_path, InstallationPlan(name="example-app", path=tmp_path))
+
+    assert (tmp_path / ".env.example").read_bytes() == original
+    assert (tmp_path / ".env.reference").read_bytes() == reference
+    if existing_environment:
+        assert path.read_bytes() == b"APP_KEY=existing-secret\n"
+    else:
+        assert not path.exists()
+    assert not list(tmp_path.glob(".tmp_*"))
+
+@pytest.mark.parametrize("database", ["", "../unsafe.sqlite", ":memory:"])
+def test_invalid_sqlite_template_does_not_publish_environment(
+    tmp_path: Path,
+    database: str,
+) -> None:
+    """Validate template database paths before publishing the environment.
+
+    Parameters
+    ----------
+    tmp_path : Path
+        Isolated application directory.
+    database : str
+        Invalid SQLite filename provided by the template.
+    """
+    original = f"APP_NAME=Template\nAPP_KEY=\nDB_DATABASE={database}\n"
+    (tmp_path / ".env.example").write_text(original, encoding="utf-8")
+
+    with pytest.raises(CompatibilityError):
+        configure_environment(tmp_path, InstallationPlan(name="example-app", path=tmp_path))
+
+    assert not (tmp_path / ".env").exists()
+    assert (tmp_path / ".env.example").read_text(encoding="utf-8") == original
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "DB_PASSWORD\nAPP_KEY",
+        "export KEY",
+        "KEY=bad",
+        "",
+        "1APP",
+        "\u00c5PP",
+        "APP_\u00e9",
+        "APP_\u0661",
+    ],
+)
+def test_invalid_environment_key_does_not_change_file(tmp_path: Path, key: str) -> None:
+    """Reject malformed keys before writing an environment file.
+
+    Parameters
+    ----------
+    tmp_path : Path
+        Isolated application directory.
+    key : str
+        Invalid or nonportable key that must not become an assignment.
+    """
+    path = tmp_path / ".env"
+    original = b"APP_KEY=existing\n"
+    path.write_bytes(original)
+
+    with pytest.raises(ValueError, match="Invalid environment key"):
+        set_literal_env(path, key, "secret")
+
+    assert path.read_bytes() == original
+
+@pytest.mark.parametrize("key", ["_", "APP9", "_APP_1"])
+def test_portable_environment_keys_are_supported(tmp_path: Path, key: str) -> None:
+    """Accept ASCII letters, digits, and underscores in portable environment keys.
+
+    Parameters
+    ----------
+    tmp_path : Path
+        Isolated directory containing an empty environment file.
+    key : str
+        Valid ASCII key with an alphabetic or underscore first character.
+    """
+    path = tmp_path / ".env"
+    path.write_text("", encoding="utf-8")
+
+    set_env_value(path, key, "value")
+
+    assert read_env(path)[key] == "value"

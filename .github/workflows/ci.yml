@@ -30,6 +30,14 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Checkout Master skeleton
+        uses: actions/checkout@v6
+        with:
+          repository: orionis-framework/skeleton
+          ref: master
+          path: .ci-skeleton/master
+          persist-credentials: false
+
       - name: Checkout Blank skeleton
         uses: actions/checkout@v6
         with:
@@ -62,6 +70,22 @@ jobs:
           path: .ci-skeleton/slim_mcp
           persist-credentials: false
 
+      - name: Checkout Slim Worker skeleton
+        uses: actions/checkout@v6
+        with:
+          repository: orionis-framework/skeleton
+          ref: slim_worker_1.x
+          path: .ci-skeleton/slim_worker
+          persist-credentials: false
+
+      - name: Checkout Slim Realtime skeleton
+        uses: actions/checkout@v6
+        with:
+          repository: orionis-framework/skeleton
+          ref: slim_realtime_1.x
+          path: .ci-skeleton/slim_realtime
+          persist-credentials: false
+
       - name: Set up uv and Python
         uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4
         with:
@@ -74,6 +98,9 @@ jobs:
 
       - name: Check lint
         run: uv run --no-sync ruff check . --extend-exclude .ci-skeleton
+
+      - name: Check formatting
+        run: uv run --no-sync ruff format --check . --extend-exclude .ci-skeleton
 
       - name: Check types
         run: uv run --no-sync mypy

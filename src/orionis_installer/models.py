@@ -10,10 +10,13 @@ DEFAULT_DESCRIPTION = "A modern application built with Orionis Framework."
 class Stack(StrEnum):
     """Enumerate the application stacks available in the source catalog."""
 
+    MASTER = "master"
     BLANK = "blank"
     SSR = "ssr"
     SLIM_API = "slim_api"
     SLIM_MCP = "slim_mcp"
+    SLIM_WORKER = "slim_worker"
+    SLIM_REALTIME = "slim_realtime"
 
 @dataclass(frozen=True)
 class SkeletonSource:
@@ -88,6 +91,12 @@ class SkeletonSource:
 
 BASE_REPOSITORY = "https://github.com/orionis-framework/skeleton"
 STACKS: dict[Stack, SkeletonSource] = {
+    Stack.MASTER: SkeletonSource(
+        repository=BASE_REPOSITORY,
+        branch="master",
+        label="Full application",
+        description="The complete application with HTTP, MCP, realtime, and console routes.",
+    ),
     Stack.BLANK: SkeletonSource(
         repository=BASE_REPOSITORY,
         branch="blank_1.x",
@@ -97,20 +106,32 @@ STACKS: dict[Stack, SkeletonSource] = {
     Stack.SSR: SkeletonSource(
         repository=BASE_REPOSITORY,
         branch="ssr_1.x",
-        label="SSR",
+        label="Server-rendered web",
         description="A starting point for applications with server-side rendering.",
     ),
     Stack.SLIM_API: SkeletonSource(
         repository=BASE_REPOSITORY,
         branch="slim_api_1.x",
         label="Slim API",
-        description="A lightweight starting point for API and WebSocket applications.",
+        description="A focused JSON API with HTTP routing and database configuration.",
     ),
     Stack.SLIM_MCP: SkeletonSource(
         repository=BASE_REPOSITORY,
         branch="slim_mcp_1.x",
         label="Slim MCP",
         description="A starting point for Model Context Protocol applications.",
+    ),
+    Stack.SLIM_WORKER: SkeletonSource(
+        repository=BASE_REPOSITORY,
+        branch="slim_worker_1.x",
+        label="Queue worker",
+        description="Background jobs and scheduled tasks without HTTP routes.",
+    ),
+    Stack.SLIM_REALTIME: SkeletonSource(
+        repository=BASE_REPOSITORY,
+        branch="slim_realtime_1.x",
+        label="Realtime",
+        description="A focused WebSocket application for realtime connections.",
     ),
 }
 DEFAULT_STACK = Stack.BLANK
@@ -209,7 +230,8 @@ class InstallationPlan:
         if any(
             default is not None and not isinstance(default, kind)
             for default, kind in (
-                (self.default_storage, Storage), (self.default_database, Database),
+                (self.default_storage, Storage),
+                (self.default_database, Database),
             )
         ):
             raise ValidationError(MESSAGES["default_driver_invalid"])
@@ -290,13 +312,10 @@ class PostInstallOptions:
         Whether to initialize Git, or None to defer to interaction policy.
     migrate : bool or None
         Whether to request migrations, or None to defer to interaction policy.
-    open : bool or None
-        Whether to open the editor, or None to defer to interaction policy.
     """
 
     git: bool | None = None
     migrate: bool | None = None
-    open: bool | None = None
 
 @dataclass
 class InstallationResult:
@@ -313,8 +332,6 @@ class InstallationResult:
         Current Git initialization state.
     migrations : State
         Current schema migration state.
-    editor : State
-        Current editor launch state.
     python_version : str or None
         Verified application interpreter version.
     framework_version : str or None
@@ -329,7 +346,6 @@ class InstallationResult:
     creation: State = State.PENDING
     git: State = State.PENDING
     migrations: State = State.PENDING
-    editor: State = State.PENDING
     python_version: str | None = None
     framework_version: str | None = None
     warnings: list[str] = field(default_factory=list)
@@ -346,8 +362,8 @@ class InstallationResult:
             Zero for success, one for creation failure, three for follow-up failure,
             or 130 for cancellation.
         """
-        if State.CANCELLED in (self.creation, self.git, self.migrations, self.editor):
+        if State.CANCELLED in (self.creation, self.git, self.migrations):
             return 130
         if self.creation != State.COMPLETED:
             return 1
-        return 3 if State.FAILED in (self.git, self.migrations, self.editor) else 0
+        return 3 if State.FAILED in (self.git, self.migrations) else 0

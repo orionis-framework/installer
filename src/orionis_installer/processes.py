@@ -182,7 +182,7 @@ def isolated_environment(
     )
     return result
 
-def resolve_executable( # NOSONAR
+def resolve_executable(  # NOSONAR
     name: str,
     cwd: Path,
     *,
@@ -238,59 +238,6 @@ def resolve_executable( # NOSONAR
             if os.name == "nt" or os.access(resolved, os.X_OK):
                 return resolved
     return None
-
-def editor_command(launcher: Path, project: Path) -> tuple[list[str], dict[str, str]]:
-    """
-    Adapt the official VS Code batch wrapper without invoking cmd.exe.
-
-    The wrapper's quoted %~dp0 paths are read as data. Only the installed native
-    Code executable and its cli.js within the same installation are accepted.
-    This also supports VS Code's versioned resources directory on Windows.
-
-    Parameters
-    ----------
-    launcher : Path
-        Trusted native launcher or official Windows batch wrapper.
-    project : Path
-        Project directory to open in a new editor window.
-
-    Returns
-    -------
-    tuple[list[str], dict[str, str]]
-        Native argument vector and explicit Electron environment overrides.
-
-    Raises
-    ------
-    ProcessError
-        If a batch wrapper cannot be mapped to its installed native CLI.
-    """
-    launcher = launcher.resolve()
-    project = project.resolve()
-    if launcher.suffix.lower() not in {".cmd", ".bat"}:
-        return [str(launcher), "--new-window", str(project)], {}
-    installation = launcher.parent.parent
-    try:
-        wrapper = launcher.read_text(encoding="utf-8-sig")
-    except (OSError, UnicodeError) as error:
-        raise ProcessError(MESSAGES["editor_wrapper_unreadable"]) from error
-    pair = re.search(r'^"%~dp0([^"\r\n]+)"\s+"%~dp0([^"\r\n]+)"\s+%\*\s*$', wrapper, re.MULTILINE)
-    if pair is None:
-        raise ProcessError(MESSAGES["editor_wrapper_incompatible"])
-    paths: list[Path] = []
-    for relative in pair.groups():
-        # Percent/ampersand substitutions are never interpreted as paths.
-        if any(character in relative for character in "%!&|<>^\x00"):
-            raise ProcessError(MESSAGES["editor_wrapper_ambiguous"])
-        candidate = (launcher.parent / relative.replace("\\", "/")).resolve()
-        if not _within(candidate, installation) or not candidate.is_file():
-            raise ProcessError(MESSAGES["editor_wrapper_outside"])
-        paths.append(candidate)
-    executable, cli = paths
-    if executable.name.lower() not in {"code.exe", "code - insiders.exe"} or tuple(
-        component.lower() for component in cli.parts[-4:]
-    ) != ("resources", "app", "out", "cli.js"):
-        raise ProcessError(MESSAGES["editor_components_missing"])
-    return [str(executable), str(cli), "--new-window", str(project)], {"ELECTRON_RUN_AS_NODE": "1"}
 
 class _WindowsJob:
     """Own Windows descendants independently of their process leader."""
@@ -380,24 +327,11 @@ class _WindowsJob:
             self.handle = None
             raise OSError(MESSAGES["windows_process_isolation_failed"])
 
-    def close(self, *, terminate: bool = True) -> None:
-        """
-        Release the job and optionally terminate its owned descendants.
-
-        Parameters
-        ----------
-        terminate : bool, optional
-            Preserve detached editor children when False.
-        """
+    def close(self) -> None:
+        """Release the job and terminate its owned descendants."""
         if self.handle:
-            if not terminate:
-                self.limits.basic.flags = 0
-                self.kernel.SetInformationJobObject(
-                    self.handle, 9, ctypes.byref(self.limits), ctypes.sizeof(self.limits)
-                )
             self.kernel.CloseHandle(self.handle)
             self.handle = None
-
 
 def _resume_windows_process(process: subprocess.Popen[str]) -> None:
     """
@@ -573,39 +507,7 @@ class Runner:
         """
         return self._run(argv, cwd=cwd, timeout=timeout, env=env, check=check)
 
-    def openEditor(
-        self, launcher: Path, project: Path, *, cwd: Path, timeout: float = 30
-    ) -> subprocess.CompletedProcess[str]:
-        """
-        Launch VS Code without waiting for its editor window to close.
-
-        Parameters
-        ----------
-        launcher : Path
-            Trusted editor launcher resolved before project execution.
-        project : Path
-            Directory to open in a new window.
-        cwd : Path
-            Explicit working directory for the launcher process.
-        timeout : float, optional
-            Maximum launcher execution time in seconds.
-
-        Returns
-        -------
-        subprocess.CompletedProcess[str]
-            Launcher result with successful editor children detached.
-
-        Raises
-        ------
-        ProcessError
-            If adapting or executing the launcher fails.
-        Cancelled
-            If the user interrupts the launcher.
-        """
-        argv, overrides = editor_command(launcher, project)
-        return self._run(argv, cwd=cwd, timeout=timeout, env=overrides, keep_children=True)
-
-    def _run( # NOSONAR
+    def _run(  # NOSONAR
         self,
         argv: Sequence[str | Path],
         *,
@@ -613,10 +515,9 @@ class Runner:
         timeout: float,
         env: Mapping[str, str] | None = None,
         check: bool = True,
-        keep_children: bool = False,
     ) -> subprocess.CompletedProcess[str]:
         """
-        Execute the child lifecycle with explicit descendant retention.
+        Execute a child and close its controlled process group.
 
         Parameters
         ----------
@@ -630,8 +531,6 @@ class Runner:
             Trusted environment overrides.
         check : bool, optional
             Reject unsuccessful child exit codes.
-        keep_children : bool, optional
-            Retain detached editor children after launcher completion.
 
         Returns
         -------
@@ -710,7 +609,7 @@ class Runner:
             raise Cancelled(MESSAGES["process_cancelled"]) from None
         finally:
             if job is not None:
-                job.close(terminate=not keep_children)
+                job.close()
 
     @staticmethod
     def _stop(process: subprocess.Popen[str], job: _WindowsJob | None) -> None:
