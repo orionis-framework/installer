@@ -18,6 +18,7 @@ from orionis_installer.validation import is_redirect, validate_destination
 
 WINDOWS_LOCK_ATTEMPTS = 5
 
+
 def wait_for_windows_lock(error: PermissionError, attempt: int) -> None:
     """Wait before retrying a native Windows lock or re-raise a persistent error.
 
@@ -36,6 +37,7 @@ def wait_for_windows_lock(error: PermissionError, attempt: int) -> None:
     if getattr(error, "winerror", None) not in {5, 32, 33} or attempt >= WINDOWS_LOCK_ATTEMPTS - 1:
         raise error
     time.sleep(0.1 * 2**attempt)
+
 
 def validate_tree(root: Path, *, configured: bool = False) -> None:
     """
@@ -70,6 +72,7 @@ def validate_tree(root: Path, *, configured: bool = False) -> None:
     if (root / ".venv").exists() or (not configured and (root / ".env").exists()):
         raise CompatibilityError(MESSAGES["skeleton_runtime_distributed"])
 
+
 def _remove_readonly(function: object, path: str, error: BaseException) -> None:  # NOSONAR
     """
     Retry an owned-tree deletion after removing a read-only file flag.
@@ -94,6 +97,7 @@ def _remove_readonly(function: object, path: str, error: BaseException) -> None:
     os.chmod(path, stat.S_IWRITE | stat.S_IREAD)
     if callable(function):
         function(path)  # NOSONAR
+
 
 def remove_owned_tree(root: Path, *, identity: tuple[int, int] | None = None) -> None:
     """
@@ -126,6 +130,7 @@ def remove_owned_tree(root: Path, *, identity: tuple[int, int] | None = None) ->
             if is_redirect(node):
                 raise ValidationError(MESSAGES["cleanup_tree_redirect"])
     shutil.rmtree(root, onexc=_remove_readonly)
+
 
 @contextmanager
 def staging_destination(destination: Path) -> Iterator[Path]:
@@ -207,6 +212,7 @@ def staging_destination(destination: Path) -> Iterator[Path]:
                 ) from None
             raise
 
+
 def publish(
     staging: Path, destination: Path, *, on_created: Callable[[], None] | None = None
 ) -> None:
@@ -258,6 +264,7 @@ def publish(
                 wait_for_windows_lock(exc, attempt)
             else:
                 break
+
 
 def clone_skeleton(
     staging: Path, git: Path, runner: object, *, source: SkeletonSource | None = None

@@ -24,6 +24,7 @@ from orionis_installer.prerequisites import Prerequisites
 from orionis_installer.processes import Runner
 from orionis_installer.validation import is_redirect, validate_text
 
+
 class PostUI(Protocol):
     """Define the interaction required by optional post-install operations."""
 
@@ -96,6 +97,7 @@ class PostUI(Protocol):
         """
         ...
 
+
 def seeder_safety(root: Path) -> None:  # NOSONAR
     """
     Inspect a seeder tree independently of schema migration execution.
@@ -145,6 +147,7 @@ def seeder_safety(root: Path) -> None:  # NOSONAR
         if not inert:
             raise CompatibilityError(MESSAGES["seeders_unsafe"])
 
+
 def connection_values(root: Path) -> dict[str, str]:
     """
     Read verified connection keys without importing application configuration.
@@ -176,6 +179,7 @@ def connection_values(root: Path) -> dict[str, str]:
         )
     }
 
+
 def valid_port(value: str) -> bool:
     """
     Check a bounded ASCII decimal port without unsafe integer conversion.
@@ -193,6 +197,7 @@ def valid_port(value: str) -> bool:
     return (
         1 <= len(value) <= 5 and value.isascii() and value.isdecimal() and 1 <= int(value) <= 65535
     )
+
 
 def connection_ready(values: dict[str, str]) -> bool:
     """
@@ -222,6 +227,7 @@ def connection_ready(values: dict[str, str]) -> bool:
         service = values.get("DB_SERVICE_NAME", "")
         return server_ready and service not in ("", "configure-me")
     return server_ready
+
 
 def _connection_prompt(root: Path, ui: PostUI) -> bool:
     """
@@ -276,6 +282,7 @@ def _connection_prompt(root: Path, ui: PostUI) -> bool:
             set_literal_env(root / ".env", key, value)
     return True
 
+
 def _safe_connection_label(value: str) -> str:
     """
     Hide connection labels that could contain credentials or terminal controls.
@@ -294,6 +301,7 @@ def _safe_connection_label(value: str) -> str:
     if any(c in value for c in "@\x1b\r\n") or "://" in value:
         return MESSAGES["connection_display_hidden"]
     return value
+
 
 def migration_commands(result: InstallationResult) -> tuple[str, ...]:
     """
@@ -327,6 +335,7 @@ def migration_commands(result: InstallationResult) -> tuple[str, ...]:
         if literal_value(values.get(key, "")) == "database":
             commands.append(command)
     return tuple(commands)
+
 
 def _migrate(result: InstallationResult, runner: Runner, ui: PostUI, no_interaction: bool) -> State:
     """
@@ -395,6 +404,7 @@ def _migrate(result: InstallationResult, runner: Runner, ui: PostUI, no_interact
         ui.message(MESSAGES["migration_command"].format(command=command))
         runner.run([python, "-B", "reactor", command], cwd=root, timeout=300)
     return State.COMPLETED
+
 
 def run_post_install(  # NOSONAR
     result: InstallationResult,

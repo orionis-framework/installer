@@ -12,6 +12,7 @@ from orionis_installer.configuration import (
     configure_pyproject,
     ensure_gitignore,
     read_env,
+    set_env_value,
 )
 from orionis_installer.exceptions import Cancelled, CompatibilityError, InstallerError
 from orionis_installer.messages import MESSAGES
@@ -47,6 +48,7 @@ print(json.dumps({'database':db,'driver':str(c.driver),'storage':disk,
  'storage_driver':str(f.driver),'name':Env.get('APP_NAME')}))
 """
 
+
 def project_python(root: Path) -> Path:
     """
     Locate the interpreter inside the final application's direct environment.
@@ -73,6 +75,7 @@ def project_python(root: Path) -> Path:
     if not interpreter.is_file():
         raise CompatibilityError(MESSAGES["project_interpreter_missing"])
     return interpreter
+
 
 def probe_json(runner: Runner, python: Path, root: Path, source: str) -> dict[str, Any]:
     """
@@ -110,6 +113,7 @@ def probe_json(runner: Runner, python: Path, root: Path, source: str) -> dict[st
         raise CompatibilityError(MESSAGES["project_probe_invalid"])
     return data
 
+
 def _requirements_for(
     requirements: tuple[Requirement, ...],
     environment: dict[str, str],
@@ -138,6 +142,7 @@ def _requirements_for(
         for requirement in requirements
         if requirement.marker is None or requirement.marker.evaluate(environment)
     )
+
 
 def verify_metadata(  # NOSONAR
     data: dict[str, Any],
@@ -215,6 +220,7 @@ def verify_metadata(  # NOSONAR
             if name not in installed or not dependency.specifier.contains(installed[name]):
                 raise CompatibilityError(MESSAGES["framework_dependency_missing"])
 
+
 def verify_configuration(data: dict[str, Any], plan: InstallationPlan) -> None:
     """
     Check that effective framework configuration matches the installation plan.
@@ -240,6 +246,7 @@ def verify_configuration(data: dict[str, Any], plan: InstallationPlan) -> None:
         or data.get("name") != plan.name
     ):
         raise CompatibilityError(MESSAGES["effective_configuration_mismatch"])
+
 
 def ensure_app_key(runner: Runner, python: Path, root: Path) -> None:
     """
@@ -276,6 +283,9 @@ def ensure_app_key(runner: Runner, python: Path, root: Path) -> None:
         raise CompatibilityError(MESSAGES["app_key_missing"])
     if not missing and before != after:
         raise CompatibilityError(MESSAGES["app_key_changed"])
+    if missing:
+        set_env_value(path, "APP_KEY", after)
+
 
 class Installer:
     """Coordinate verified creation while preserving published application files."""

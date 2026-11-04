@@ -13,6 +13,7 @@ _VERSION_PROBE = (
     "import json,sys; print(json.dumps([*sys.version_info[:3], sys.version_info.releaselevel]))"
 )
 
+
 @dataclass(frozen=True, slots=True)
 class Prerequisites:
     """Store verified executables and the selected application Python version."""
@@ -21,6 +22,7 @@ class Prerequisites:
     git: Path
     python: Path
     python_version: str
+
 
 def verify_python(runner: Runner, interpreter: Path, *, cwd: Path) -> str:
     """
@@ -59,6 +61,7 @@ def verify_python(runner: Runner, interpreter: Path, *, cwd: Path) -> str:
     ):
         raise PrerequisiteError(MESSAGES["python_stable_required"])
     return ".".join(str(part) for part in version[:3])
+
 
 def check_prerequisites(  # NOSONAR
     runner: Runner,

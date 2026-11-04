@@ -10,6 +10,7 @@ RESERVED = {"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"} | {
     f"{prefix}{n}" for prefix in ("COM", "LPT") for n in range(1, 10)
 }
 
+
 def validate_text(value: str, label: str) -> str:
     """
     Reject terminal control characters without changing printable text.
@@ -34,6 +35,7 @@ def validate_text(value: str, label: str) -> str:
     if any(ord(c) < 32 or 127 <= ord(c) < 160 for c in value):
         raise ValidationError(MESSAGES["text_control_invalid"].format(label=label))
     return value
+
 
 def validate_name(value: str) -> str:
     """
@@ -63,6 +65,7 @@ def validate_name(value: str) -> str:
         raise ValidationError(MESSAGES["name_invalid"])
     return value
 
+
 def validate_email(value: str) -> str:
     """
     Validate a reasonable author email without network access.
@@ -87,6 +90,7 @@ def validate_email(value: str) -> str:
         raise ValidationError(MESSAGES["email_invalid"])
     return value
 
+
 def is_redirect(path: Path) -> bool:
     """
     Detect symbolic links and Windows reparse points without following them.
@@ -106,6 +110,7 @@ def is_redirect(path: Path) -> bool:
         getattr(info, "st_file_attributes", 0)
         & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
     )
+
 
 def validate_destination(path: Path) -> Path:
     """

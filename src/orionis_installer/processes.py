@@ -75,6 +75,7 @@ _ENVIRONMENT_ALLOWLIST = frozenset(
 )
 _INDEX_CREDENTIAL = re.compile(r"UV_INDEX_[A-Z0-9_]+_(?:USERNAME|PASSWORD)\Z")
 
+
 def _within(path: Path, root: Path) -> bool:
     """
     Check whether a path equals or descends from a controlled root.
@@ -92,6 +93,7 @@ def _within(path: Path, root: Path) -> bool:
         Whether the path belongs to the subtree.
     """
     return path == root or root in path.parents
+
 
 def _trusted_path(path: str, cwd: Path, excluded_roots: Sequence[Path] = ()) -> str:  # NOSONAR
     """
@@ -125,6 +127,7 @@ def _trusted_path(path: str, cwd: Path, excluded_roots: Sequence[Path] = ()) -> 
             continue
         entries.append(str(resolved))
     return os.pathsep.join(entries)
+
 
 def isolated_environment(
     base: Mapping[str, str] | None = None,
@@ -182,6 +185,7 @@ def isolated_environment(
     )
     return result
 
+
 def resolve_executable(  # NOSONAR
     name: str,
     cwd: Path,
@@ -238,6 +242,7 @@ def resolve_executable(  # NOSONAR
             if os.name == "nt" or os.access(resolved, os.X_OK):
                 return resolved
     return None
+
 
 class _WindowsJob:
     """Own Windows descendants independently of their process leader."""
@@ -333,6 +338,7 @@ class _WindowsJob:
             self.kernel.CloseHandle(self.handle)
             self.handle = None
 
+
 def _resume_windows_process(process: subprocess.Popen[str]) -> None:
     """
     Resume the sole primary thread of our newly created suspended process.
@@ -410,6 +416,7 @@ def _resume_windows_process(process: subprocess.Popen[str]) -> None:
     finally:
         kernel.CloseHandle(thread)
 
+
 @contextmanager
 def _defer_spawn_interrupt() -> Iterator[None]:
     """
@@ -451,6 +458,7 @@ def _defer_spawn_interrupt() -> Iterator[None]:
         signal.signal(signal.SIGINT, previous)
         if interrupted:
             raise KeyboardInterrupt
+
 
 class Runner:
     """Capture tools without exposing their output, and reap owned children."""

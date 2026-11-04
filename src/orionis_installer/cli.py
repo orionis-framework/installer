@@ -42,6 +42,7 @@ app = typer.Typer(
     rich_markup_mode=None,
 )
 
+
 def show_version(value: bool) -> None:
     """
     Print the installer version when the version flag is enabled.
@@ -64,6 +65,7 @@ def show_version(value: bool) -> None:
     if value:
         typer.echo(f"orionis-installer {__version__}")
         raise typer.Exit()
+
 
 @app.callback()
 def root(
@@ -104,6 +106,7 @@ def root(
     """
     context.ensure_object(dict)
     context.obj.update(no_color=no_color, verbose=verbose)
+
 
 @dataclass
 class _NewCommand:
@@ -241,7 +244,9 @@ class _NewCommand:
         """
         _run_new(self)
 
+
 new = app.command("new", help=CLI_HELP["new"])(_NewCommand)
+
 
 def _run_new(command: _NewCommand) -> None:
     """
@@ -306,6 +311,7 @@ def _run_new(command: _NewCommand) -> None:
         ui.error(MESSAGES["unexpected"])
         raise typer.Exit(1) from exc
 
+
 def _prompt_application(command: _NewCommand, ui: UI) -> None:
     """
     Prompt for application metadata omitted from the command.
@@ -351,6 +357,7 @@ def _prompt_application(command: _NewCommand, ui: UI) -> None:
             validator=_validate_optional_email,
         )
 
+
 def _prompt_services(command: _NewCommand, ui: UI) -> None:
     """
     Prompt for omitted storage, database, and active driver selections.
@@ -385,6 +392,7 @@ def _prompt_services(command: _NewCommand, ui: UI) -> None:
             ui.select(MESSAGES["default_database"], DATABASE_CHOICES[:-1], Database.SQLITE.value)
         )
 
+
 def _build_plan(command: _NewCommand) -> InstallationPlan:
     """
     Build a validated installation plan using defaults for omitted values.
@@ -418,6 +426,7 @@ def _build_plan(command: _NewCommand) -> InstallationPlan:
         default_database=command.default_database,
     )
 
+
 def main() -> None:
     """
     Run the public Typer command-line entry point.
@@ -433,6 +442,7 @@ def main() -> None:
         When command dispatch terminates with its exit status.
     """
     app()
+
 
 def _validate_description(value: str) -> str:
     """
@@ -455,6 +465,7 @@ def _validate_description(value: str) -> str:
     """
     return validate_text(value, MESSAGES["description"])
 
+
 def _validate_author_name(value: str) -> str:
     """
     Validate an optional author name without allowing terminal controls.
@@ -475,6 +486,7 @@ def _validate_author_name(value: str) -> str:
         If ``value`` contains terminal control characters.
     """
     return validate_text(value, MESSAGES["author_name"])
+
 
 def _validate_optional_email(value: str) -> str:
     """

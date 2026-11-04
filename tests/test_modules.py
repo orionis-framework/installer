@@ -58,6 +58,7 @@ from orionis_installer.validation import validate_email, validate_name
 SOURCE = Path(__file__).resolve().parents[1] / "src" / "orionis_installer"
 MODULES = sorted(SOURCE.rglob("*.py"))
 
+
 @pytest.mark.parametrize("path", MODULES, ids=lambda path: str(path.relative_to(SOURCE)))
 def test_module_contract(path: Path) -> None:
     """Import every module and enforce documented method naming contracts.
@@ -87,6 +88,7 @@ def test_module_contract(path: Path) -> None:
                     continue
                 assert not re.search(r"[a-z]_[a-z]", method.name), method.name
 
+
 def test_runner_success_failure_and_timeout(tmp_path: Path) -> None:
     """Execute real owned processes and enforce their exit and timeout contracts.
 
@@ -103,6 +105,7 @@ def test_runner_success_failure_and_timeout(tmp_path: Path) -> None:
         runner.run([python, "-I", "-c", "raise SystemExit(7)"], cwd=tmp_path)
     with pytest.raises(ProcessError):
         runner.run([python, "-I", "-c", "while True: pass"], cwd=tmp_path, timeout=0.1)
+
 
 def test_environment_excludes_application_secrets(tmp_path: Path) -> None:
     """Exclude application settings and untrusted paths from tool environments.
@@ -121,6 +124,7 @@ def test_environment_excludes_application_secrets(tmp_path: Path) -> None:
     assert environment["GIT_TERMINAL_PROMPT"] == "0"
     assert resolve_executable("unavailable", tmp_path, path=str(tmp_path)) is None
 
+
 def test_staging_reserves_and_cleans_owned_directory(tmp_path: Path) -> None:
     """Clean owned staging while preserving unrelated destination files.
 
@@ -138,6 +142,7 @@ def test_staging_reserves_and_cleans_owned_directory(tmp_path: Path) -> None:
     assert not staging.exists()
     assert not destination.exists()
     assert not list(tmp_path.iterdir())
+
 
 @pytest.fixture
 def publication_paths(tmp_path: Path) -> tuple[Path, Path, dict[Path, bytes]]:
@@ -168,6 +173,7 @@ def publication_paths(tmp_path: Path) -> tuple[Path, Path, dict[Path, bytes]]:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(contents)
     return staging, destination, files
+
 
 @pytest.mark.parametrize("name", ["config", "reactor"])
 @pytest.mark.parametrize("winerror", [5, 32, 33])
@@ -225,6 +231,7 @@ def test_publication_retries_transient_windows_locks(
         for path in destination.rglob("*")
         if path.is_file()
     } == files
+
 
 @pytest.mark.parametrize(
     ("error_number", "winerror", "expected_attempts"),
@@ -302,6 +309,7 @@ def test_publication_preserves_partial_destination_on_error(
     assert published.keys().isdisjoint(remaining)
     assert published | remaining == files
 
+
 @pytest.mark.parametrize("changed", ["destination", "ancestor", "child", "identity"])
 def test_publication_rechecks_controlled_paths_after_retry(
     publication_paths: tuple[Path, Path, dict[Path, bytes]],
@@ -372,6 +380,7 @@ def test_publication_rechecks_controlled_paths_after_retry(
     else:
         assert not list(destination.iterdir())
 
+
 @pytest.mark.skipif(os.name != "nt", reason="Windows open-file directory rename semantics")
 def test_publication_recovers_after_real_windows_file_lock(
     publication_paths: tuple[Path, Path, dict[Path, bytes]],
@@ -389,6 +398,7 @@ def test_publication_recovers_after_real_windows_file_lock(
     staging, destination, files = publication_paths
     delays: list[float] = []
     with (staging / "config" / "settings.py").open("rb") as locked:
+
         def release_lock(delay: float) -> None:
             """Release the native file lock before the next publication attempt."""
             delays.append(delay)
@@ -405,6 +415,7 @@ def test_publication_recovers_after_real_windows_file_lock(
         if path.is_file()
     } == files
 
+
 def test_prompts_accept_keyboard_input() -> None:
     """Accept selector navigation and validated text through a controlled terminal."""
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):
@@ -417,6 +428,7 @@ def test_prompts_accept_keyboard_input() -> None:
         assert not prompts.confirm("Continue?", True)
     assert selector_text([("local", "Local")], 0, "local")
     assert InputValidator(validate_name).callback is validate_name
+
 
 def test_output_and_ui_states(tmp_path: Path) -> None:
     """Render every state and narrow output without exposing terminal controls.
@@ -448,6 +460,7 @@ def test_output_and_ui_states(tmp_path: Path) -> None:
     assert terminal_choice("Disk", [("local", "Local")], "local") == "Disk Local"
     with patch("orionis_installer.ui.has_tty", return_value=False), pytest.raises(ValidationError):
         ui.requireTty()
+
 
 @pytest.mark.parametrize(
     "width, encoding",
@@ -493,6 +506,7 @@ def test_banner_versions_and_logo(width: int, encoding: str) -> None:
         assert not any(0x2801 <= ord(character) <= 0x28FF for character in rendered)
     lookup.assert_not_called()
 
+
 def test_logo_bitmap_and_palette() -> None:
     """Preserve every silhouette pixel and the official three-color palette."""
     assert len(_LOGO_PIXELS) == 52
@@ -511,6 +525,7 @@ def test_logo_bitmap_and_palette() -> None:
                     pixel = _LOGO_PIXELS[row * 4 + row_offset][column * 2 + column_offset]
                     assert bool(dots & (1 << bit)) == (pixel != ".")
 
+
 def test_compact_logo_dimensions_and_palette() -> None:
     """Retain seven compact raster rows and the official three-color palette."""
     logo = _brand_logo(compact=True)
@@ -518,6 +533,7 @@ def test_compact_logo_dimensions_and_palette() -> None:
     assert len(rows) == 7
     assert {len(row) for row in rows} == {13}
     assert {span.style for span in logo.spans} == {"logo_outline", "logo_star", "logo_spark"}
+
 
 def test_post_install_noninteractive_defaults(tmp_path: Path) -> None:
     """Skip unrequested follow-up work and never prompt for noninteractive defaults.
@@ -538,6 +554,7 @@ def test_post_install_noninteractive_defaults(tmp_path: Path) -> None:
     ui.confirm.assert_not_called()
     runner.run.assert_not_called()
     assert result.exit_code == 0
+
 
 def test_python_and_connection_checks(tmp_path: Path) -> None:
     """Verify interpreter and connection readiness without opening database sockets.
@@ -562,6 +579,7 @@ def test_python_and_connection_checks(tmp_path: Path) -> None:
     with pytest.raises(CompatibilityError):
         seeder_safety(tmp_path)
 
+
 def test_public_constants_and_validation() -> None:
     """Verify source catalogs and portable application metadata validation."""
     assert __version__
@@ -584,6 +602,7 @@ def test_public_constants_and_validation() -> None:
     for name in ("../example", "CON", "bad name"):
         with pytest.raises(ValidationError):
             validate_name(name)
+
 
 @pytest.mark.parametrize("failure", [False, True])
 @pytest.mark.parametrize("stack", [None, *(stack.value for stack in Stack)])

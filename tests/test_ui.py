@@ -12,6 +12,7 @@ from orionis_installer.ui import UI
 from orionis_installer.ui.messages import STACK_CHOICES
 from orionis_installer.ui.prompts import Prompts
 
+
 class EncodedStream(io.StringIO):
     """Simulate a redirected terminal with a specific output encoding."""
 
@@ -36,6 +37,7 @@ class EncodedStream(io.StringIO):
             Encoding chosen for this output stream.
         """
         return self._encoding
+
 
 @pytest.mark.parametrize("width", [40, 60, 80, 120])
 @pytest.mark.parametrize("encoding", ["ascii", "utf-8"])
@@ -66,6 +68,7 @@ def test_redirected_wizard_respects_width_and_encoding(
     assert all(len(line) <= width for line in output.splitlines())
     assert "4/4 stages complete" in output
 
+
 def test_output_sanitizes_controls_without_color(monkeypatch: pytest.MonkeyPatch) -> None:
     """Drop injected terminal operations and honor the monochrome environment.
 
@@ -85,6 +88,7 @@ def test_output_sanitizes_controls_without_color(monkeypatch: pytest.MonkeyPatch
     assert "Visible guidance" in output
     assert "Warning: Problem remains" in output
 
+
 def test_number_shortcuts_reach_every_stack() -> None:
     """Select each catalog entry by number and explicitly confirm with Enter."""
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):
@@ -92,6 +96,7 @@ def test_number_shortcuts_reach_every_stack() -> None:
         for number, (value, _) in enumerate(STACK_CHOICES, start=1):
             pipe.send_text(str(number) + "\r")
             assert prompts.select("Stack", STACK_CHOICES, "blank") == value
+
 
 @pytest.mark.parametrize("cancel_key, failure", [("\x03", KeyboardInterrupt), ("\x04", EOFError)])
 def test_number_shortcut_can_be_cancelled(cancel_key: str, failure: type[BaseException]) -> None:
@@ -109,6 +114,7 @@ def test_number_shortcut_can_be_cancelled(cancel_key: str, failure: type[BaseExc
         with pytest.raises(failure):
             Prompts(no_color=True).select("Stack", STACK_CHOICES, "blank")
 
+
 def test_failed_progress_retains_completed_and_unstarted_stages() -> None:
     """Record actual durations without reporting unexecuted stages as complete."""
     stream = io.StringIO()
@@ -124,6 +130,7 @@ def test_failed_progress_retains_completed_and_unstarted_stages() -> None:
     assert progress.durations[:2] == [2.0, 3.0]
     assert "1/4 stages complete" in stream.getvalue()
     assert "All installation stages completed" not in stream.getvalue()
+
 
 @pytest.mark.parametrize("width", [40, 80])
 @pytest.mark.parametrize("encoding", ["ascii", "utf-8"])
@@ -167,6 +174,7 @@ def test_progress_rendering_preserves_stage_details(
     else:
         assert "1.0s" not in output
 
+
 def test_worker_guidance_prepares_queue_before_consuming(tmp_path: Path) -> None:
     """Prepare the selected queue backend before suggesting separate worker processes.
 
@@ -192,6 +200,7 @@ def test_worker_guidance_prepares_queue_before_consuming(tmp_path: Path) -> None
     assert "reactor serve" not in output
     assert "never-print-this" not in output
     assert "Visual Studio Code" not in output
+
 
 @pytest.mark.parametrize("stack", [Stack.SLIM_REALTIME, Stack.SLIM_MCP])
 def test_service_guidance_matches_the_installed_stack(tmp_path: Path, stack: Stack) -> None:
@@ -219,6 +228,7 @@ def test_service_guidance_matches_the_installed_stack(tmp_path: Path, stack: Sta
     assert "Migrations pending" not in output
     if stack == Stack.SLIM_MCP:
         assert "https://inspector.orionis-framework.com/" in output
+
 
 def test_incomplete_installation_offers_recovery_only(tmp_path: Path) -> None:
     """Avoid suggesting startup commands before dependencies have been verified.

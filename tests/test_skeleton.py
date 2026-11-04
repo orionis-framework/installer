@@ -50,6 +50,7 @@ DATABASE_SELECTIONS = [(value, None) for value in Database] + [
     (Database.ALL, value) for value in Database if value != Database.ALL
 ]
 
+
 @pytest.fixture(scope="session")
 def skeleton_roots() -> dict[Stack, Path]:
     """Check every configured audit checkout before running the real matrix.
@@ -76,6 +77,7 @@ def skeleton_roots() -> dict[Stack, Path]:
         )
     return paths
 
+
 @pytest.fixture(params=list(Stack), scope="session")
 def skeleton_root(request: pytest.FixtureRequest, skeleton_roots: dict[Stack, Path]) -> Path:
     """Locate a checked skeleton branch for read-only inspection.
@@ -93,6 +95,7 @@ def skeleton_root(request: pytest.FixtureRequest, skeleton_roots: dict[Stack, Pa
         Downloaded branch under the explicitly configured audit directory.
     """
     return skeleton_roots[request.param]
+
 
 def test_incomplete_skeleton_audit_fails_once(tmp_path: Path) -> None:
     """Report missing branches once instead of repeating every matrix setup error.
@@ -125,6 +128,7 @@ def test_incomplete_skeleton_audit_fails_once(tmp_path: Path) -> None:
         if stack not in {Stack.BLANK, Stack.SSR}:
             assert f"{stack.value} ({source.branch})" in output
     assert "ERROR at setup" not in output
+
 
 @pytest.mark.parametrize("storage,default_storage", STORAGE_SELECTIONS)
 @pytest.mark.parametrize("database,default_database", DATABASE_SELECTIONS)
@@ -177,7 +181,7 @@ def test_real_environment_matrix(
     values = read_env(tmp_path / ".env")
     assert values["FILESYSTEM_DISK"] == plan.active_storage.value
     assert values["DB_CONNECTION"] == plan.active_database.value
-    assert literal_value(values["APP_NAME"]) == plan.name
+    assert values["APP_NAME"] == plan.name
     assert requirement.extras.issuperset(plan.extras)
     assert Requirement(str(requirement)).specifier == original_requirement.specifier
     assert requirement.marker == original_requirement.marker
@@ -187,6 +191,7 @@ def test_real_environment_matrix(
     ready = connection_ready(connection_values(tmp_path))
     assert ready == (plan.active_database == Database.SQLITE)
     assert (tmp_path / ".gitignore").read_text(encoding="utf-8").endswith("!uv.lock\n")
+
 
 def test_real_skeleton_structure(skeleton_root: Path) -> None:
     """Check every Python file's syntax and the separated route bootstrap contract.
@@ -230,6 +235,7 @@ def test_real_skeleton_structure(skeleton_root: Path) -> None:
     for kind in kinds:
         assert paths[kind] == f"routes/{kind}.py"
         assert (skeleton_root / paths[kind]).is_file()
+
 
 @pytest.mark.smoke
 @pytest.mark.parametrize("stack", list(Stack))
@@ -344,6 +350,7 @@ def test_real_installation_and_sqlite_migrations(
                 assert not (plan.path / ".env.example").exists()
                 verify_configuration(probe_json(runner, python, plan.path, CONFIG_PROBE), selected)
 
+
 @pytest.mark.parametrize(
     "storage,database",
     [
@@ -396,7 +403,7 @@ def test_minimal_mcp_configuration(
     ensure_gitignore(tmp_path)
 
     values = read_env(tmp_path / ".env")
-    assert literal_value(values["APP_NAME"]) == plan.name
+    assert values["APP_NAME"] == plan.name
     assert values["FILESYSTEM_DISK"] == storage.value
     assert values["DB_CONNECTION"] == database.value
     assert literal_value(values["DB_DATABASE"])
@@ -406,6 +413,7 @@ def test_minimal_mcp_configuration(
         assert literal_value(values["DB_SERVICE_NAME"]) == "configure-me"
     assert not (tmp_path / "config/database.py").exists()
     assert not (tmp_path / "config/filesystems.py").exists()
+
 
 @pytest.mark.parametrize("filename", ["database.py", "filesystems.py"])
 @pytest.mark.parametrize("source", ["default = (", 'default = "unsupported"'])

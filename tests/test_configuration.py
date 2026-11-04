@@ -5,9 +5,11 @@ import os
 import time
 from pathlib import Path
 import pytest
+from dotenv import dotenv_values
 
 from orionis_installer.configuration import (
     _inline_comment,
+    _normalize_environment_quotes,
     configure_environment,
     configure_pyproject,
     literal_value,
@@ -18,6 +20,7 @@ from orionis_installer.configuration import (
 )
 from orionis_installer.exceptions import CompatibilityError
 from orionis_installer.models import Database, InstallationPlan, Stack, Storage
+
 
 @pytest.mark.parametrize("stack", list(Stack))
 @pytest.mark.parametrize("storage", list(Storage))
@@ -65,6 +68,7 @@ def test_manifest_driver_extras(
     assert str(requirement) == (
         "orionis" + (f"[{','.join(sorted(expected))}]" if expected else "") + ">=0.932.0"
     )
+
 
 @pytest.mark.parametrize("database_directory", [False, True])
 @pytest.mark.parametrize("database", [value for value in Database if value != Database.ALL])
@@ -134,7 +138,8 @@ def test_minimal_environment_supports_database(
 
     values = read_env(tmp_path / ".env")
     assert values["DB_CONNECTION"] == database.value
-    assert literal_value(values["APP_NAME"]) == plan.name
+    assert values["APP_NAME"] == plan.name
+    assert f'APP_NAME="{plan.name}"\n' in (tmp_path / ".env").read_text(encoding="utf-8")
     assert "DB_PASSWORD" not in values
     assert not list(tmp_path.glob(".tmp_*"))
     assert delays == ([] if winerror is None else [0.1, 0.2])
@@ -152,6 +157,7 @@ def test_minimal_environment_supports_database(
         assert literal_value(values["DB_DATABASE"]) == plan.name
         if database == Database.ORACLE:
             assert literal_value(values["DB_SERVICE_NAME"]) == "configure-me"
+
 
 @pytest.mark.parametrize(
     ("error_number", "winerror", "expected_attempts"),
@@ -212,6 +218,7 @@ def test_environment_write_preserves_file_on_persistent_error(
     assert path.read_text(encoding="utf-8") == original
     assert not list(tmp_path.glob(".tmp_*"))
 
+
 @pytest.mark.parametrize("value", [".", "./", "", ":memory:", "../data.sqlite", "file:test"])
 def test_sqlite_rejects_nonpersistent_paths(value: str) -> None:
     """Reject paths that do not identify a persistent application-local file.
@@ -222,6 +229,7 @@ def test_sqlite_rejects_nonpersistent_paths(value: str) -> None:
         Unsafe or non-file SQLite path.
     """
     assert not valid_sqlite_path(value)
+
 
 @pytest.mark.parametrize("filename", [".env.example", "env.example", "both"])
 @pytest.mark.parametrize("database", [Database.SQLITE, Database.PGSQL, Database.ORACLE])
@@ -277,6 +285,7 @@ def test_environment_adds_missing_sections_and_retains_reference(
     assert not (tmp_path / "env.example").exists()
     assert not list(tmp_path.glob(".tmp_*"))
 
+
 @pytest.mark.parametrize(
     "storage_key",
     ["S3_KEY", "AWS_ACCESS_KEY_ID", "AZURE_ACCOUNT_KEY", "GCS_KEY_FILE"],
@@ -317,7 +326,7 @@ def test_followup_credentials_preserve_groups_and_original_content(
     assert literal_value(values[storage_key]) == secret
     assert values["DB_PORT"] == "5432"
     assert values["MANUAL_VALUE"] == "${APP_NAME}"
-    assert "export DB_CONNECTION='pgsql' # selected driver\r\n" in result
+    assert 'export DB_CONNECTION="pgsql" # selected driver\r\n' in result
     assert "DB_DATABASE='database/database.sqlite'\r\n" in result
     assert result.index("DB_DATABASE=") < result.index("DB_PASSWORD=")
     assert result.index("DB_PASSWORD=") < result.index("DB_PORT=")
@@ -327,6 +336,7 @@ def test_followup_credentials_preserve_groups_and_original_content(
     assert multiline in result
     assert result.startswith("# Local settings\r\nAPP_NAME=demo\r\nAPP_KEY=\r\n\r\n")
     assert result.count("\n") == result.count("\r\n")
+
 
 @pytest.mark.parametrize(
     ("raw", "comment"),
@@ -355,6 +365,7 @@ def test_inline_comments_preserve_dotenv_boundaries(raw: str, comment: str) -> N
     """
     assert _inline_comment(raw) == comment
 
+
 def test_missing_block_precedes_next_section_comment(tmp_path: Path) -> None:
     """Keep section comments attached when inserting a previously absent block.
 
@@ -369,8 +380,9 @@ def test_missing_block_precedes_next_section_comment(tmp_path: Path) -> None:
     set_env_value(path, "FILESYSTEM_DISK", "local")
 
     assert path.read_text(encoding="utf-8") == (
-        "APP_KEY=\n\nFILESYSTEM_DISK='local'\n\n# Logging settings\nLOG_CHANNEL=single\n"
+        'APP_KEY=\n\nFILESYSTEM_DISK="local"\n\n# Logging settings\nLOG_CHANNEL=single\n'
     )
+
 
 @pytest.mark.parametrize("existing_environment", [False, True])
 def test_generation_failure_preserves_templates_and_previous_environment(
@@ -413,6 +425,7 @@ def test_generation_failure_preserves_templates_and_previous_environment(
         assert not path.exists()
     assert not list(tmp_path.glob(".tmp_*"))
 
+
 @pytest.mark.parametrize("database", ["", "../unsafe.sqlite", ":memory:"])
 def test_invalid_sqlite_template_does_not_publish_environment(
     tmp_path: Path,
@@ -435,6 +448,7 @@ def test_invalid_sqlite_template_does_not_publish_environment(
 
     assert not (tmp_path / ".env").exists()
     assert (tmp_path / ".env.example").read_text(encoding="utf-8") == original
+
 
 @pytest.mark.parametrize(
     "key",
@@ -468,6 +482,7 @@ def test_invalid_environment_key_does_not_change_file(tmp_path: Path, key: str) 
 
     assert path.read_bytes() == original
 
+
 @pytest.mark.parametrize("key", ["_", "APP9", "_APP_1"])
 def test_portable_environment_keys_are_supported(tmp_path: Path, key: str) -> None:
     """Accept ASCII letters, digits, and underscores in portable environment keys.
@@ -485,3 +500,236 @@ def test_portable_environment_keys_are_supported(tmp_path: Path, key: str) -> No
     set_env_value(path, key, "value")
 
     assert read_env(path)[key] == "value"
+
+
+@pytest.mark.parametrize(
+    ("value", "quoted"),
+    [
+        ("", '""'),
+        ("local", '"local"'),
+        ("example-app", '"example-app"'),
+        ("O'Reilly", '"O\'Reilly"'),
+        ('say "hello"', "'say \"hello\"'"),
+        ('it\'s "quoted"', '"it\'s \\"quoted\\""'),
+        (r"C:\temp\new", r'"C:\\temp\\new"'),
+        ("ends\\", r'"ends\\"'),
+        (r"two\\slashes", r'"two\\\\slashes"'),
+        ('ends "quoted"\\', "'ends \"quoted\"\\\\'"),
+        ("first\nsecond", '"first\nsecond"'),
+        (" text # hash ", '" text # hash "'),
+    ],
+)
+def test_environment_writer_prefers_double_quotes(
+    tmp_path: Path,
+    value: str,
+    quoted: str,
+) -> None:
+    """Round-trip values with double quotes unless single quotes avoid escaping.
+
+    Parameters
+    ----------
+    tmp_path : Path
+        Isolated directory containing the environment file.
+    value : str
+        Text containing representative quotes, backslashes, or whitespace.
+    quoted : str
+        Exact serialized value including its preferred delimiters.
+    """
+    path = tmp_path / ".env"
+    path.write_text("", encoding="utf-8")
+
+    set_env_value(path, "CUSTOM_TEXT", value)
+
+    assert path.read_text(encoding="utf-8") == f"CUSTOM_TEXT={quoted}\n"
+    assert read_env(path)["CUSTOM_TEXT"] == value
+
+
+@pytest.mark.parametrize(
+    ("value", "quote_mode", "stored"),
+    [
+        ("simple", "auto", "simple"),
+        ("with spaces", "auto", '"with spaces"'),
+        ('say "hello"', "auto", "'say \"hello\"'"),
+        ("", "auto", '""'),
+        ("5432", "never", "5432"),
+        ("local", "never", "local"),
+    ],
+)
+def test_environment_quoting_modes_remain_supported(
+    tmp_path: Path,
+    value: str,
+    quote_mode: str,
+    stored: str,
+) -> None:
+    """Preserve automatic and unquoted assignments under the shared quoting policy.
+
+    Parameters
+    ----------
+    tmp_path : Path
+        Isolated directory containing the environment file.
+    value : str
+        Value to serialize under an explicit quoting mode.
+    quote_mode : str
+        Existing automatic or unquoted policy.
+    stored : str
+        Exact expected representation of the value.
+    """
+    path = tmp_path / ".env"
+    path.write_text("", encoding="utf-8")
+
+    set_env_value(path, "CUSTOM_TEXT", value, quote_mode=quote_mode)
+
+    assert path.read_text(encoding="utf-8") == f"CUSTOM_TEXT={stored}\n"
+    assert read_env(path)["CUSTOM_TEXT"] == value
+
+
+def test_invalid_quoting_mode_does_not_change_environment(tmp_path: Path) -> None:
+    """Reject unknown quoting policies without changing the environment file.
+
+    Parameters
+    ----------
+    tmp_path : Path
+        Isolated directory containing the original environment file.
+    """
+    path = tmp_path / ".env"
+    original = b"APP_KEY=existing\n"
+    path.write_bytes(original)
+
+    with pytest.raises(ValueError, match="Invalid environment quoting policy"):
+        set_env_value(path, "APP_KEY", "updated", quote_mode="invalid")
+
+    assert path.read_bytes() == original
+
+
+@pytest.mark.parametrize(
+    ("name", "stored"),
+    [
+        ("orionis-mcp", "orionis-mcp"),
+        ("example.app", "example.app"),
+        ("123", "str:123"),
+        ("3.14", "str:3.14"),
+        ("1e3", "str:1e3"),
+        ("0xFF", "str:0xFF"),
+        ("1j", "str:1j"),
+        ("True", "str:True"),
+        ("false", "str:false"),
+        ("None", "str:None"),
+        ("null", "str:null"),
+        ("NaN", "str:NaN"),
+        ("nil", "str:nil"),
+    ],
+)
+def test_application_name_is_readable_without_changing_its_type(
+    tmp_path: Path,
+    name: str,
+    stored: str,
+) -> None:
+    """Keep names readable and explicitly protect Orionis' automatic type coercion.
+
+    Parameters
+    ----------
+    tmp_path : Path
+        Isolated application directory.
+    name : str
+        Valid application name, including numeric and sentinel-like names.
+    stored : str
+        Plain name or the string-prefixed representation required by Orionis.
+    """
+    (tmp_path / ".env.example").write_text("APP_NAME=Template\nAPP_KEY=\n", encoding="utf-8")
+
+    configure_environment(tmp_path, InstallationPlan(name=name, path=tmp_path))
+
+    path = tmp_path / ".env"
+    assert f'APP_NAME="{stored}"\n' in path.read_text(encoding="utf-8")
+    assert read_env(path)["APP_NAME"] == stored
+    assert literal_value(read_env(path)["APP_NAME"]) == name
+
+
+def test_generation_normalizes_template_quotes_without_changing_values(tmp_path: Path) -> None:
+    """Normalize quoted templates while retaining types, duplicates, and comments.
+
+    Parameters
+    ----------
+    tmp_path : Path
+        Isolated application directory containing a mixed-quote template.
+    """
+    original = (
+        "# Application\r\nAPP_NAME='Template' # application name\r\nAPP_KEY=\r\n"
+        "APP_ENV='local' # environment\r\nAPP_DEBUG=True\r\nAPP_PORT=8000\r\n"
+        'APP_URL="http://127.0.0.1:8000"\r\n'
+        "CUSTOM_TEXT='first\r\nsecond # kept' # multiline\r\n"
+        "DOUBLE_QUOTES='say \"hello\"' # avoid escaping\r\n"
+        'BOTH_QUOTES="it\'s \\"quoted\\"" # both delimiters\r\n'
+        "CUSTOM_PATH='C:\\temp\\new'\r\n"
+        "DUPLICATE='first'\r\nDUPLICATE='last'\r\n"
+        "MANUAL_VALUE='${APP_NAME}'\r\nUNASSIGNED\r\n\r\n"
+        "# Database\r\nDB_CONNECTION='sqlite'\r\n"
+        "DB_DATABASE='database/database.sqlite'\r\n"
+    )
+    example = tmp_path / ".env.example"
+    example.write_bytes(original.encode("utf-8"))
+    expected = read_env(example)
+    expected.update(APP_NAME="orionis-mcp", FILESYSTEM_DISK="local")
+
+    configure_environment(tmp_path, InstallationPlan(name="orionis-mcp", path=tmp_path))
+
+    path = tmp_path / ".env"
+    result = path.read_bytes().decode("utf-8")
+    assert read_env(path) == expected
+    assert result.startswith('# Application\r\nAPP_NAME="orionis-mcp" # application name\r\n')
+    assert 'APP_ENV="local" # environment\r\n' in result
+    assert "APP_DEBUG=True\r\nAPP_PORT=8000\r\n" in result
+    assert 'CUSTOM_TEXT="first\r\nsecond # kept" # multiline\r\n' in result
+    assert "DOUBLE_QUOTES='say \"hello\"' # avoid escaping\r\n" in result
+    assert 'BOTH_QUOTES="it\'s \\"quoted\\"" # both delimiters\r\n' in result
+    assert 'DUPLICATE="first"\r\nDUPLICATE="last"\r\n' in result
+    assert 'MANUAL_VALUE="${APP_NAME}"\r\nUNASSIGNED\r\n' in result
+    assert 'DB_DATABASE="database/database.sqlite"\r\n' in result
+    assert result.count("\n") == result.count("\r\n")
+
+
+@pytest.mark.parametrize("newline", ["\n", "\r\n", "\r", ""])
+@pytest.mark.parametrize("value", ["plain", "first\r\nsecond", "first\nsecond"])
+def test_template_quote_normalization_preserves_each_line_ending(
+    newline: str,
+    value: str,
+) -> None:
+    """Keep assignment terminators independent from newlines inside their values.
+
+    Parameters
+    ----------
+    newline : str
+        Existing assignment terminator, or an empty string at end of file.
+    value : str
+        Single-line or multiline value whose embedded newlines must be preserved.
+    """
+    text = f"SETTING='{value}' # retained{newline}"
+
+    normalized = _normalize_environment_quotes(text)
+
+    assert normalized == f'SETTING="{value}" # retained{newline}'
+    assert _normalize_environment_quotes(normalized) == normalized
+
+
+def test_literal_credentials_remain_protected_from_interpolation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Prefer double quotes without exposing literal credentials to interpolation.
+
+    Parameters
+    ----------
+    tmp_path : Path
+        Isolated directory containing the environment file.
+    monkeypatch : pytest.MonkeyPatch
+        Scoped process environment used to expose unintended interpolation.
+    """
+    path = tmp_path / ".env"
+    path.write_text("", encoding="utf-8")
+    monkeypatch.setenv("APP_NAME", "must-not-expand")
+    secret = 'it\'s "quoted" ${APP_NAME} \\ # literal'
+
+    set_literal_env(path, "DB_PASSWORD", secret)
+
+    assert path.read_text(encoding="utf-8").startswith('DB_PASSWORD="base64:')
+    assert literal_value(dotenv_values(path)["DB_PASSWORD"]) == secret

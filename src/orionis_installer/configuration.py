@@ -24,6 +24,7 @@ PORTS = {
     Database.REDSHIFT: 5439,
 }
 
+
 def orionis_requirement(document: tomlkit.TOMLDocument) -> Requirement:
     """
     Extract the template's single registry-based Orionis requirement.
@@ -57,6 +58,7 @@ def orionis_requirement(document: tomlkit.TOMLDocument) -> Requirement:
     if matches[0].url:
         raise CompatibilityError(MESSAGES["requirement_url_unsupported"])
     return matches[0]
+
 
 def configure_pyproject(  # NOSONAR
     root: Path, plan: InstallationPlan, *, python_version: str = "3.14.0"
@@ -141,6 +143,7 @@ def configure_pyproject(  # NOSONAR
     (root / ".python-version").write_text("3.14\n", encoding="ascii")
     return requirement
 
+
 def environment_example(root: Path) -> Path:
     """
     Select an unambiguous environment example from the template.
@@ -168,6 +171,7 @@ def environment_example(root: Path) -> Path:
     if legacy.is_file():
         return legacy
     raise CompatibilityError(MESSAGES["environment_example_missing"])
+
 
 def config_contract(root: Path, plan: InstallationPlan) -> None:
     """
@@ -226,6 +230,7 @@ def config_contract(root: Path, plan: InstallationPlan) -> None:
                 MESSAGES["skeleton_selection_unsupported"].format(active=active)
             )
 
+
 _ENV_GROUPS = (
     "APP",
     "AUTH",
@@ -244,6 +249,7 @@ _ENV_GROUPS = (
     "TESTING",
 )
 _STORAGE_PREFIXES = {"FILESYSTEM", "LOCAL", "PUBLIC", "S3", "AWS", "AZURE", "GCS"}
+
 
 def _environment_group(key: str) -> str:
     """Resolve the environment block shared by related service settings.
@@ -266,6 +272,25 @@ def _environment_group(key: str) -> str:
     if key.startswith("DB_TASK_"):
         return "TASKS"
     return prefix
+
+
+def _quoted_value(value: str) -> str:
+    """Quote dotenv text with double quotes unless single quotes avoid escaping.
+
+    Parameters
+    ----------
+    value : str
+        Parsed or caller-supplied text whose characters must remain unchanged.
+
+    Returns
+    -------
+    str
+        Delimited value with escaped backslashes and any unavoidable inner quotes.
+    """
+    quote = "'" if '"' in value and "'" not in value else '"'
+    escaped = value.replace("\\", "\\\\").replace(quote, "\\" + quote)
+    return quote + escaped + quote
+
 
 def _assignment(key: str, value: str, quote_mode: str, newline: str) -> str:
     """Encode one assignment without interpreting its value or expanding references.
@@ -296,8 +321,9 @@ def _assignment(key: str, value: str, quote_mode: str, newline: str) -> str:
     if quote_mode not in {"always", "auto", "never"}:
         raise ValueError("Invalid environment quoting policy")
     if quote_mode == "always" or (quote_mode == "auto" and not value.isalnum()):
-        value = "'" + value.replace("'", "\\'") + "'"
+        value = _quoted_value(value)
     return f"{key}={value}{newline}"
+
 
 def _inline_comment(raw: str) -> str:  # NOSONAR
     """Preserve a trailing comment outside an assignment's quoted value.
@@ -334,6 +360,35 @@ def _inline_comment(raw: str) -> str:  # NOSONAR
     if match:
         return match.group()
     return tail.rstrip("\r\n") if leading and tail.startswith("#") else ""
+
+
+def _normalize_environment_quotes(text: str) -> str:
+    """Apply the quoting policy to template strings without altering their values.
+
+    Parameters
+    ----------
+    text : str
+        Template contents, including comments and optionally multiline values.
+
+    Returns
+    -------
+    str
+        Contents retaining unquoted values, duplicate bindings, and line endings.
+    """
+    output: list[str] = []
+    for binding in parse_stream(io.StringIO(text)):
+        raw = binding.original.string
+        head, separator, tail = raw.partition("=")
+        stripped = tail.lstrip(" \t")
+        if binding.value is not None and stripped.startswith(("'", '"')):
+            leading = tail[: len(tail) - len(stripped)]
+            comment = _inline_comment(raw)
+            ending = re.search(r"(?:\r\n|\r|\n)\Z", raw)
+            raw = head + separator + leading + _quoted_value(binding.value)
+            raw += (" " + comment if comment else "") + (ending.group() if ending else "")
+        output.append(raw)
+    return "".join(output)
+
 
 def _updated_environment(text: str, key: str, value: str, quote_mode: str) -> str:  # NOSONAR
     """Replace a value in place or insert it into its existing service block.
@@ -395,6 +450,7 @@ def _updated_environment(text: str, key: str, value: str, quote_mode: str) -> st
     before = text.rstrip("\r\n")
     return (before + newline * 2 if before else "") + assignment
 
+
 def _write_environment(path: Path, text: str) -> None:
     """Atomically replace an environment file while retrying transient Windows locks.
 
@@ -440,6 +496,7 @@ def _write_environment(path: Path, text: str) -> None:
             if temporary is not None:
                 temporary.unlink(missing_ok=True)
 
+
 def set_env_value(path: Path, key: str, value: str, *, quote_mode: str = "always") -> None:
     """Write a typed environment value inside its related configuration block.
 
@@ -470,6 +527,7 @@ def set_env_value(path: Path, key: str, value: str, *, quote_mode: str = "always
         text = source.read()
     _write_environment(path, _updated_environment(text, key, value, quote_mode))
 
+
 def _set_env_key(path: Path, key: str, value: str, *, quote_mode: str = "always") -> None:
     """Keep internal callers on the shared grouped environment writer.
 
@@ -491,6 +549,7 @@ def _set_env_key(path: Path, key: str, value: str, *, quote_mode: str = "always"
     """
     set_env_value(path, key, value, quote_mode=quote_mode)
 
+
 def set_literal_env(path: Path, key: str, value: str) -> None:
     """
     Encode a literal environment value with Orionis' verified base64 type.
@@ -507,6 +566,7 @@ def set_literal_env(path: Path, key: str, value: str) -> None:
     encoded = base64.b64encode(value.encode("utf-8")).decode("ascii")
     _set_env_key(path, key, f"base64:{encoded}")
 
+
 def read_env(path: Path) -> dict[str, str | None]:
     """
     Read environment entries without interpolation or process mutation.
@@ -522,6 +582,7 @@ def read_env(path: Path) -> dict[str, str | None]:
         Parsed values, including None for keys without an assigned value.
     """
     return dict(dotenv_values(path, interpolate=False, encoding="utf-8"))
+
 
 def literal_value(value: str | None) -> str:
     """
@@ -553,6 +614,7 @@ def literal_value(value: str | None) -> str:
         return value[4:]
     return value
 
+
 def valid_sqlite_path(database: str) -> bool:
     """
     Check that SQLite names a persistent local file rather than memory or a URI.
@@ -581,6 +643,7 @@ def valid_sqlite_path(database: str) -> bool:
         and not any(ord(character) < 32 or ord(character) == 127 for character in database)
     )
 
+
 def _prepare_sqlite_database(root: Path, database: str) -> None:
     """Prepare the parent directory for a persistent application-local SQLite file.
 
@@ -601,6 +664,29 @@ def _prepare_sqlite_database(root: Path, database: str) -> None:
     if not valid_sqlite_path(database) or (root / database).is_dir():
         raise CompatibilityError(MESSAGES["sqlite_path_invalid"])
     (root / database).parent.mkdir(parents=True, exist_ok=True)
+
+
+def _application_name(value: str) -> str:
+    """Keep names readable while preventing Orionis from coercing their types.
+
+    Parameters
+    ----------
+    value : str
+        Validated application name without interpolation or type-prefix syntax.
+
+    Returns
+    -------
+    str
+        Plain name, with ``str:`` only for names Orionis would otherwise coerce.
+    """
+    if value.lower() in {"true", "false", "none", "null", "nan", "nil"}:
+        return "str:" + value
+    try:
+        ast.literal_eval(value)
+    except ValueError, SyntaxError:
+        return value
+    return "str:" + value
+
 
 def configure_environment(root: Path, plan: InstallationPlan) -> None:  # NOSONAR
     """Create a local environment and consume its successfully applied examples.
@@ -628,9 +714,9 @@ def configure_environment(root: Path, plan: InstallationPlan) -> None:  # NOSONA
     if not {"APP_NAME", "APP_KEY"} <= values.keys():
         raise CompatibilityError(MESSAGES["environment_keys_missing"])
     with example.open(encoding="utf-8", newline="") as source:
-        text = source.read()
+        text = _normalize_environment_quotes(source.read())
     updates = [
-        ("APP_NAME", "base64:" + base64.b64encode(plan.name.encode()).decode("ascii"), "always"),
+        ("APP_NAME", _application_name(plan.name), "always"),
         ("FILESYSTEM_DISK", plan.active_storage.value, "always"),
         ("DB_CONNECTION", plan.active_database.value, "always"),
     ]
@@ -670,6 +756,7 @@ def configure_environment(root: Path, plan: InstallationPlan) -> None:  # NOSONA
     # Both examples were checked for ambiguity before configuration. Keep the reference.
     for filename in (".env.example", "env.example"):
         (root / filename).unlink(missing_ok=True)
+
 
 def ensure_gitignore(root: Path) -> None:
     """

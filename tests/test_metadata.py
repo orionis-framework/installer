@@ -9,6 +9,7 @@ from orionis_installer.exceptions import CompatibilityError
 from orionis_installer.installer import probe_json, verify_configuration, verify_metadata
 from orionis_installer.models import Database, InstallationPlan, Storage
 
+
 @pytest.mark.parametrize("installed", [{"faker": "40.40.0"}, {}])
 def test_core_metadata_without_optional_drivers(
     tmp_path: Path,
@@ -51,6 +52,7 @@ def test_core_metadata_without_optional_drivers(
         with pytest.raises(CompatibilityError):
             verify_metadata(data, plan, requirement)
 
+
 @pytest.mark.parametrize("installed", [{"core": "1.2", "driver": "2"}, {"core": "0.1"}])
 def test_metadata_parses_requirements_once(tmp_path: Path, installed: dict[str, str]) -> None:
     """Parse each dependency once while enforcing selected markers and versions.
@@ -81,6 +83,7 @@ def test_metadata_parses_requirements_once(tmp_path: Path, installed: dict[str, 
                 verify_metadata(data, plan, requirement)
         assert parser.call_count == len(requirements)
 
+
 @pytest.mark.parametrize("output", ["[]", "null", "42", "", "not-json"])
 def test_probe_rejects_non_mapping(output: str, tmp_path: Path) -> None:
     """Reject probe output that cannot satisfy the metadata mapping contract.
@@ -96,6 +99,7 @@ def test_probe_rejects_non_mapping(output: str, tmp_path: Path) -> None:
     runner.run.return_value = CompletedProcess([], 0, stdout=output)
     with pytest.raises(CompatibilityError):
         probe_json(runner, tmp_path / "python", tmp_path, "pass")
+
 
 @pytest.mark.parametrize("driver", ["aws", "s3", "azure"])
 def test_s3_uses_framework_driver_name(tmp_path: Path, driver: str) -> None:
@@ -121,6 +125,7 @@ def test_s3_uses_framework_driver_name(tmp_path: Path, driver: str) -> None:
     else:
         with pytest.raises(CompatibilityError):
             verify_configuration(data, plan)
+
 
 @pytest.mark.parametrize("complete", [True, False])
 def test_aggregate_preserves_driver_requirements(tmp_path: Path, complete: bool) -> None:

@@ -12,6 +12,7 @@ from orionis_installer.models import STACKS, Stack
 from orionis_installer.prerequisites import check_prerequisites
 from orionis_installer.processes import Runner, resolve_executable
 
+
 def main() -> None:
     """
     Verify wheel isolation and create a disposable application through uvx.
@@ -151,6 +152,7 @@ def main() -> None:
             "without seeded users verified.",
             flush=True,
         )
+
 
 if __name__ == "__main__":
     main()

@@ -7,6 +7,7 @@ from orionis_installer.messages import MESSAGES
 
 DEFAULT_DESCRIPTION = "A modern application built with Orionis Framework."
 
+
 class Stack(StrEnum):
     """Enumerate the application stacks available in the source catalog."""
 
@@ -17,6 +18,7 @@ class Stack(StrEnum):
     SLIM_MCP = "slim_mcp"
     SLIM_WORKER = "slim_worker"
     SLIM_REALTIME = "slim_realtime"
+
 
 @dataclass(frozen=True)
 class SkeletonSource:
@@ -89,6 +91,7 @@ class SkeletonSource:
         if not valid_repository or invalid_branch:
             raise ValidationError(MESSAGES["skeleton_source_invalid"])
 
+
 BASE_REPOSITORY = "https://github.com/orionis-framework/skeleton"
 STACKS: dict[Stack, SkeletonSource] = {
     Stack.MASTER: SkeletonSource(
@@ -136,6 +139,7 @@ STACKS: dict[Stack, SkeletonSource] = {
 }
 DEFAULT_STACK = Stack.BLANK
 
+
 class Storage(StrEnum):
     """Enumerate supported storage choices and the aggregate SDK selection."""
 
@@ -144,6 +148,7 @@ class Storage(StrEnum):
     AZURE = "azure"
     GCS = "gcs"
     ALL = "all"
+
 
 class Database(StrEnum):
     """Enumerate supported database choices and the aggregate driver selection."""
@@ -156,6 +161,7 @@ class Database(StrEnum):
     REDSHIFT = "redshift"
     ALL = "all"
 
+
 class State(StrEnum):
     """Represent the observable state of each installation operation."""
 
@@ -165,6 +171,7 @@ class State(StrEnum):
     SKIPPED = MESSAGES["state_skipped"]
     FAILED = MESSAGES["state_failed"]
     CANCELLED = MESSAGES["state_cancelled"]
+
 
 @dataclass(frozen=True)
 class InstallationPlan:
@@ -301,6 +308,7 @@ class InstallationPlan:
             extras.add("database" if self.database == Database.ALL else self.database.value)
         return tuple(sorted(extras))
 
+
 @dataclass(frozen=True)
 class PostInstallOptions:
     """
@@ -316,6 +324,7 @@ class PostInstallOptions:
 
     git: bool | None = None
     migrate: bool | None = None
+
 
 @dataclass
 class InstallationResult:
