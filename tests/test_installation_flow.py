@@ -6,10 +6,11 @@ from unittest.mock import Mock, patch
 import pytest
 from typer.testing import CliRunner
 from orionis_installer.cli import app
-from orionis_installer.configuration import read_env
+from orionis_installer.configuration import PORTS, configure_environment, read_env
 from orionis_installer.exceptions import CompatibilityError, ProcessError
 from orionis_installer.installer import ensure_app_key
 from orionis_installer.models import (
+    Database,
     InstallationPlan,
     InstallationResult,
     PostInstallOptions,
@@ -172,6 +173,63 @@ def test_internal_migration_failure_preserves_created_project(tmp_path: Path) ->
     assert [call.args[0][-1] for call in runner.run.call_args_list] == ["migrate", "auth:migrate"]
     assert "reported migration commands" in result.warnings[0]
     assert "auth:migrate" in ui.message.call_args.args[0]
+
+
+@pytest.mark.parametrize("database", list(PORTS))
+def test_interactive_connection_writes_direct_values(tmp_path: Path, database: Database) -> None:
+    """Write prompted connection fields directly before running migrations.
+
+    Parameters
+    ----------
+    tmp_path : Path
+        Isolated application directory containing a minimal environment example.
+    database : Database
+        External connection requiring credentials, including Oracle service names.
+    """
+    (tmp_path / ".env.example").write_text(
+        'APP_NAME=Template\nAPP_KEY="base64:dGVzdC1rZXk="\n', encoding="utf-8"
+    )
+    plan = InstallationPlan(name="example", path=tmp_path, database=database)
+    configure_environment(tmp_path, plan)
+    result = InstallationResult(plan, creation=State.COMPLETED)
+    prerequisites = Prerequisites(tmp_path / "uv", tmp_path / "git", Path(sys.executable), "3.14.3")
+    runner, ui = Mock(spec=Runner), Mock()
+    secret = 'it\'s "quoted" \\ # direct'
+    ui.confirm.return_value = True
+    ui.text.side_effect = [
+        "db.internal",
+        str(PORTS[database]),
+        "application-data",
+        "operator",
+        secret,
+    ]
+
+    with patch("orionis_installer.post_install.project_python", return_value=Path(sys.executable)):
+        run_post_install(
+            result,
+            PostInstallOptions(git=False, migrate=True),
+            prerequisites,
+            runner,
+            ui,
+            no_interaction=False,
+        )
+
+    path = tmp_path / ".env"
+    values = read_env(path)
+    database_key = "DB_SERVICE_NAME" if database == Database.ORACLE else "DB_DATABASE"
+    assert values["DB_HOST"] == "db.internal"
+    assert values["DB_PORT"] == str(PORTS[database])
+    assert values[database_key] == "application-data"
+    assert values["DB_USERNAME"] == "operator"
+    assert values["DB_PASSWORD"] == secret
+    assert values["APP_KEY"] == "base64:dGVzdC1rZXk="
+    assert {key for key, value in values.items() if value and value.startswith("base64:")} == {
+        "APP_KEY"
+    }
+    assert f"DB_PORT={PORTS[database]}\n" in path.read_text(encoding="utf-8")
+    assert ui.text.call_args.kwargs["password"] is True
+    assert result.migrations == State.COMPLETED
+    ui.warning.assert_not_called()
 
 
 @pytest.mark.parametrize("before", ["", "none", "null", "nil", "NaN"])

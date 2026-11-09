@@ -8,6 +8,7 @@ import pytest
 from dotenv import dotenv_values
 
 from orionis_installer.configuration import (
+    PORTS,
     _inline_comment,
     _normalize_environment_quotes,
     configure_environment,
@@ -152,11 +153,12 @@ def test_minimal_environment_supports_database(
         else:
             assert not (tmp_path / "database" / "database.sqlite").exists()
     else:
-        assert literal_value(values["DB_HOST"]) == "127.0.0.1"
-        assert literal_value(values["DB_USERNAME"]) == "configure-me"
-        assert literal_value(values["DB_DATABASE"]) == plan.name
+        assert values["DB_HOST"] == "127.0.0.1"
+        assert values["DB_USERNAME"] == "configure-me"
+        assert values["DB_DATABASE"] == plan.name
+        assert f"DB_PORT={PORTS[database]}\n" in (tmp_path / ".env").read_text(encoding="utf-8")
         if database == Database.ORACLE:
-            assert literal_value(values["DB_SERVICE_NAME"]) == "configure-me"
+            assert values["DB_SERVICE_NAME"] == "configure-me"
 
 
 @pytest.mark.parametrize(
@@ -232,11 +234,13 @@ def test_sqlite_rejects_nonpersistent_paths(value: str) -> None:
 
 
 @pytest.mark.parametrize("filename", [".env.example", "env.example", "both"])
-@pytest.mark.parametrize("database", [Database.SQLITE, Database.PGSQL, Database.ORACLE])
+@pytest.mark.parametrize("database", list(Database))
+@pytest.mark.parametrize("storage", list(Storage))
 def test_environment_adds_missing_sections_and_retains_reference(
     tmp_path: Path,
     filename: str,
     database: Database,
+    storage: Storage,
 ) -> None:
     """Configure inherited defaults and remove only successfully consumed examples.
 
@@ -248,9 +252,11 @@ def test_environment_adds_missing_sections_and_retains_reference(
         Preferred, legacy, or duplicate equivalent template filenames.
     database : Database
         Database selection requiring inherited core configuration.
+    storage : Storage
+        Storage selection requiring an explicit effective disk.
     """
     original = (
-        "APP_NAME=Template\nAPP_KEY=\n\nCACHE_STORE=file\n\n"
+        'APP_NAME=Template\nAPP_KEY="base64:dGVzdC1rZXk="\n\nCACHE_STORE=file\n\n'
         "LOG_CHANNEL=single\n\nQUEUE_CONNECTION=database\n\nREALTIME_HOST=127.0.0.1\n"
     )
     examples = (".env.example", "env.example") if filename == "both" else (filename,)
@@ -261,7 +267,7 @@ def test_environment_adds_missing_sections_and_retains_reference(
     plan = InstallationPlan(
         name="example-app",
         path=tmp_path,
-        storage=Storage.S3,
+        storage=storage,
         database=database,
     )
 
@@ -270,9 +276,31 @@ def test_environment_adds_missing_sections_and_retains_reference(
     path = tmp_path / ".env"
     result = path.read_text(encoding="utf-8")
     values = read_env(path)
-    assert values["FILESYSTEM_DISK"] == "s3"
-    assert values["DB_CONNECTION"] == database.value
-    assert literal_value(values["APP_NAME"]) == "example-app"
+    expected = {
+        "APP_NAME": "example-app",
+        "APP_KEY": "base64:dGVzdC1rZXk=",
+        "DB_CONNECTION": plan.active_database.value,
+        "DB_DATABASE": "database/database.sqlite",
+        "FILESYSTEM_DISK": plan.active_storage.value,
+        "CACHE_STORE": "file",
+        "LOG_CHANNEL": "single",
+        "QUEUE_CONNECTION": "database",
+        "REALTIME_HOST": "127.0.0.1",
+    }
+    if plan.active_database != Database.SQLITE:
+        expected.update(
+            DB_HOST="127.0.0.1",
+            DB_PORT=str(PORTS[plan.active_database]),
+            DB_DATABASE=plan.name,
+            DB_USERNAME="configure-me",
+        )
+        assert f"DB_PORT={PORTS[plan.active_database]}\n" in result
+    if plan.active_database == Database.ORACLE:
+        expected["DB_SERVICE_NAME"] = "configure-me"
+    assert values == expected
+    assert [key for key, value in values.items() if value and value.startswith("base64:")] == [
+        "APP_KEY"
+    ]
     assert result.index("APP_KEY=") < result.index("DB_CONNECTION=")
     assert result.index("DB_DATABASE=") < result.index("CACHE_STORE=")
     assert result.index("CACHE_STORE=") < result.index("FILESYSTEM_DISK=")
@@ -322,8 +350,8 @@ def test_followup_credentials_preserve_groups_and_original_content(
 
     result = path.read_bytes().decode("utf-8")
     values = read_env(path)
-    assert literal_value(values["DB_PASSWORD"]) == secret
-    assert literal_value(values[storage_key]) == secret
+    assert values["DB_PASSWORD"] == secret
+    assert values[storage_key] == secret
     assert values["DB_PORT"] == "5432"
     assert values["MANUAL_VALUE"] == "${APP_NAME}"
     assert 'export DB_CONNECTION="pgsql" # selected driver\r\n' in result
@@ -335,7 +363,7 @@ def test_followup_credentials_preserve_groups_and_original_content(
     assert result.index(storage_key + "=") < result.index("# Logs")
     assert multiline in result
     assert result.startswith("# Local settings\r\nAPP_NAME=demo\r\nAPP_KEY=\r\n\r\n")
-    assert result.count("\n") == result.count("\r\n")
+    assert result.count("\n") == result.count("\r\n") + 2 * secret.count("\n")
 
 
 @pytest.mark.parametrize(
@@ -601,6 +629,7 @@ def test_invalid_quoting_mode_does_not_change_environment(tmp_path: Path) -> Non
     assert path.read_bytes() == original
 
 
+@pytest.mark.parametrize("database", [Database.SQLITE, Database.PGSQL])
 @pytest.mark.parametrize(
     ("name", "stored"),
     [
@@ -623,8 +652,9 @@ def test_application_name_is_readable_without_changing_its_type(
     tmp_path: Path,
     name: str,
     stored: str,
+    database: Database,
 ) -> None:
-    """Keep names readable and explicitly protect Orionis' automatic type coercion.
+    """Keep application and database names readable without automatic type coercion.
 
     Parameters
     ----------
@@ -634,15 +664,20 @@ def test_application_name_is_readable_without_changing_its_type(
         Valid application name, including numeric and sentinel-like names.
     stored : str
         Plain name or the string-prefixed representation required by Orionis.
+    database : Database
+        Connection whose database name may be derived from the application name.
     """
     (tmp_path / ".env.example").write_text("APP_NAME=Template\nAPP_KEY=\n", encoding="utf-8")
 
-    configure_environment(tmp_path, InstallationPlan(name=name, path=tmp_path))
+    configure_environment(tmp_path, InstallationPlan(name=name, path=tmp_path, database=database))
 
     path = tmp_path / ".env"
     assert f'APP_NAME="{stored}"\n' in path.read_text(encoding="utf-8")
     assert read_env(path)["APP_NAME"] == stored
     assert literal_value(read_env(path)["APP_NAME"]) == name
+    if database != Database.SQLITE:
+        assert read_env(path)["DB_DATABASE"] == stored
+        assert literal_value(read_env(path)["DB_DATABASE"]) == name
 
 
 def test_generation_normalizes_template_quotes_without_changing_values(tmp_path: Path) -> None:
@@ -711,25 +746,68 @@ def test_template_quote_normalization_preserves_each_line_ending(
     assert _normalize_environment_quotes(normalized) == normalized
 
 
-def test_literal_credentials_remain_protected_from_interpolation(
+def test_literal_credentials_are_direct_without_expanding_during_write(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Prefer double quotes without exposing literal credentials to interpolation.
+    """Write direct credentials without expanding references in the installer.
 
     Parameters
     ----------
     tmp_path : Path
         Isolated directory containing the environment file.
     monkeypatch : pytest.MonkeyPatch
-        Scoped process environment used to expose unintended interpolation.
+        Scoped process environment distinguishing raw text from dotenv interpolation.
     """
     path = tmp_path / ".env"
     path.write_text("", encoding="utf-8")
-    monkeypatch.setenv("APP_NAME", "must-not-expand")
+    monkeypatch.setenv("APP_NAME", "expanded-by-dotenv")
+    monkeypatch.delenv("DB_PASSWORD", raising=False)
     secret = 'it\'s "quoted" ${APP_NAME} \\ # literal'
 
     set_literal_env(path, "DB_PASSWORD", secret)
 
-    assert path.read_text(encoding="utf-8").startswith('DB_PASSWORD="base64:')
-    assert literal_value(dotenv_values(path)["DB_PASSWORD"]) == secret
+    assert path.read_text(encoding="utf-8").startswith("DB_PASSWORD=\"it's ")
+    assert read_env(path)["DB_PASSWORD"] == secret
+    assert dotenv_values(path)["DB_PASSWORD"] == secret.replace("${APP_NAME}", "expanded-by-dotenv")
+    assert "DB_PASSWORD" not in os.environ
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["123", "3.14", "false", "null", "[1, 2]", "base64:c2VjcmV0", "str:secret"],
+)
+def test_literal_credentials_preserve_string_types(tmp_path: Path, value: str) -> None:
+    """Use a readable string marker only when Orionis would interpret literal text.
+
+    Parameters
+    ----------
+    tmp_path : Path
+        Isolated directory containing the environment file.
+    value : str
+        Credential resembling a typed value or a supported Orionis type prefix.
+    """
+    path = tmp_path / ".env"
+    path.write_text("", encoding="utf-8")
+
+    set_literal_env(path, "DB_PASSWORD", value)
+
+    assert path.read_text(encoding="utf-8") == f'DB_PASSWORD="str:{value}"\n'
+    assert literal_value(read_env(path)["DB_PASSWORD"]) == value
+
+
+@pytest.mark.parametrize(
+    ("stored", "value"),
+    [("base64:c2VjcmV0", "secret"), ("str:123", "123"), ("direct", "direct")],
+)
+def test_existing_literal_values_remain_readable(stored: str, value: str) -> None:
+    """Retain read compatibility with existing environments after changing writes.
+
+    Parameters
+    ----------
+    stored : str
+        Existing direct or explicitly typed environment value.
+    value : str
+        Expected decoded text without changing its contents.
+    """
+    assert literal_value(stored) == value

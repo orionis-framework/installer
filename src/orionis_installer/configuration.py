@@ -552,19 +552,18 @@ def _set_env_key(path: Path, key: str, value: str, *, quote_mode: str = "always"
 
 def set_literal_env(path: Path, key: str, value: str) -> None:
     """
-    Encode a literal environment value with Orionis' verified base64 type.
+    Write readable dotenv text without Base64 or unintended Orionis type coercion.
 
     Parameters
     ----------
     path : Path
         Environment file to update without loading it into the installer process.
     key : str
-        Environment key receiving the encoded value.
+        Environment key receiving the quoted text.
     value : str
-        Literal UTF-8 text to preserve through dotenv interpolation.
+        Text to store directly; references retain standard dotenv interpolation.
     """
-    encoded = base64.b64encode(value.encode("utf-8")).decode("ascii")
-    _set_env_key(path, key, f"base64:{encoded}")
+    _set_env_key(path, key, _literal_text(value))
 
 
 def read_env(path: Path) -> dict[str, str | None]:
@@ -666,20 +665,27 @@ def _prepare_sqlite_database(root: Path, database: str) -> None:
     (root / database).parent.mkdir(parents=True, exist_ok=True)
 
 
-def _application_name(value: str) -> str:
-    """Keep names readable while preventing Orionis from coercing their types.
+def _literal_text(value: str) -> str:
+    """Keep text readable while preventing Orionis from coercing its string type.
 
     Parameters
     ----------
     value : str
-        Validated application name without interpolation or type-prefix syntax.
+        Caller-supplied text, possibly resembling a typed Orionis value.
 
     Returns
     -------
     str
-        Plain name, with ``str:`` only for names Orionis would otherwise coerce.
+        Plain text, with ``str:`` only for values Orionis would otherwise interpret.
     """
-    if value.lower() in {"true", "false", "none", "null", "nan", "nil"}:
+    if value.startswith(("base64:", "str:")) or value.lower() in {
+        "true",
+        "false",
+        "none",
+        "null",
+        "nan",
+        "nil",
+    }:
         return "str:" + value
     try:
         ast.literal_eval(value)
@@ -716,7 +722,7 @@ def configure_environment(root: Path, plan: InstallationPlan) -> None:  # NOSONA
     with example.open(encoding="utf-8", newline="") as source:
         text = _normalize_environment_quotes(source.read())
     updates = [
-        ("APP_NAME", _application_name(plan.name), "always"),
+        ("APP_NAME", _literal_text(plan.name), "always"),
         ("FILESYSTEM_DISK", plan.active_storage.value, "always"),
         ("DB_CONNECTION", plan.active_database.value, "always"),
     ]
@@ -732,8 +738,7 @@ def configure_environment(root: Path, plan: InstallationPlan) -> None:  # NOSONA
             ("DB_DATABASE", plan.name),
             ("DB_USERNAME", "configure-me"),
         ):
-            encoded = base64.b64encode(value.encode()).decode("ascii")
-            updates.append((key, "base64:" + encoded, "always"))
+            updates.append((key, _literal_text(value), "always"))
         updates.append(("DB_PORT", str(PORTS[plan.active_database]), "never"))
         if plan.active_database == Database.ORACLE:
             database_config = root / "config" / "database.py"
@@ -741,13 +746,7 @@ def configure_environment(root: Path, plan: InstallationPlan) -> None:  # NOSONA
                 config = database_config.read_text(encoding="utf-8")
                 if '"DB_SERVICE_NAME"' not in config and "'DB_SERVICE_NAME'" not in config:
                     raise CompatibilityError(MESSAGES["oracle_service_unsupported"])
-            updates.append(
-                (
-                    "DB_SERVICE_NAME",
-                    "base64:" + base64.b64encode(b"configure-me").decode("ascii"),
-                    "always",
-                )
-            )
+            updates.append(("DB_SERVICE_NAME", "configure-me", "always"))
         # DB_PASSWORD remains absent/commented. Do not manufacture credentials.
     for key, value, quote_mode in updates:
         text = _updated_environment(text, key, value, quote_mode)
